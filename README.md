@@ -7,8 +7,10 @@
 - `Sources/OATSchedule/Models` — доменные типы и календарь `Asia/Omsk`.
 - `Sources/OATSchedule/Core` — URLSession клиент, SwiftSoup parser, сервисы, SwiftData, diff, уведомления и фоновые задачи.
 - `Sources/OATSchedule/Features` — onboarding, расписание, изменения, настройки.
-- `Tests/OATScheduleTests/Fixtures` — компактные структурные HTML примеры для regression tests.
+- `Tests/OATScheduleTests/Fixtures` — компактные структурные HTML примеры для regression tests. Они воспроизводят наблюдаемую таблицу/ссылки, но не являются сохранёнными полными HTTP-ответами сайта: среда разработки позволила изучить отображённую структуру, но не выгрузить Network response.
 - `docs/OAT_RESEARCH.md` — фактическая структура источника и ограничения исследования.
+
+Данные поступают как HTML таблицы, размещённые в документе при его загрузке. Список корпусов и групп извлекается из ссылок; недели/дни — из заголовков таблицы; изменения — из подписей колонок «группа», «пара», «причина». `invalidStructure` не заменяет кеш. Первый снимок изменений сохраняется без уведомлений; последующие сравнения создают уведомления только для выбранной группы. Повтор уже обработанного уведомления дедуплицируется локальным ключом.
 
 ## Открыть и запустить на Mac
 
@@ -20,17 +22,33 @@ xcodegen generate
 open OATSchedule.xcodeproj
 ```
 
-Windows не содержит Apple SDK, Xcode, `xcodebuild` или Swift в PATH проекта. Поэтому генерацию Xcode-проекта, сборку и tests в этой среде выполнить нельзя.
+Выберите iOS Simulator или подключённый iPhone, проверьте Bundle ID `ru.oat.schedule` и запустите схему `OATSchedule`. Xcode разрешит Swift Package Manager dependency SwiftSoup. Unit tests находятся в `OATScheduleTests`.
+
+Windows не содержит Apple SDK, Xcode, `xcodebuild` или Swift в PATH проекта. Поэтому генерацию Xcode-проекта, сборку, запуск на устройстве/симуляторе и unit tests в этой рабочей среде выполнить нельзя; перечисленные команды нужно выполнить на Mac.
 
 ## GitHub Actions: IPA
 
-Workflow `.github/workflows/ios-ipa.yml` собирает IPA на macOS runner. Для подписи задайте секреты в **Settings → Secrets and variables → Actions**: `IOS_CERTIFICATE_BASE64` (экспортированный Apple Distribution `.p12` в Base64), `IOS_CERTIFICATE_PASSWORD`, `IOS_PROVISIONING_PROFILE_BASE64` и `IOS_TEAM_ID`. Сертификат, профиль и пароль не добавляйте в Git. Workflow экспортирует IPA как Actions artifact, не загружая её в App Store Connect.
+`.github/workflows/ios-ipa.yml` запускает parser unit tests и собирает **неподписанный IPA** на macOS runner при push/PR. Файл сохраняется как Actions artifact на 14 дней. Скачайте `OATSchedule-unsigned-IPA-…` из **Actions → iOS build and IPA → Artifacts** и подпишите его через eSign. Сертификат и provisioning profile в GitHub Actions не загружаются.
 
-Для Base64 на Mac:
+## Сеть, кеш и обновления
 
-```sh
-base64 -i Distribution.p12 | pbcopy
-base64 -i App.mobileprovision | pbcopy
-```
+Все страницы используют HTTPS и общий `HTTPClient` (таймаут, User-Agent, ограниченный retry для сетевых ошибок и временных HTTP статусов). Кодировка декодируется как UTF-8 с fallback на Windows-1251. Кеш не удаляется при сбое сети; расписание и список изменений доступны offline. Обновление запускается при входе в экран и через pull-to-refresh.
 
-После push откройте Actions → iOS build and IPA и скачайте IPA из Artifacts.
+`BGAppRefreshTask` запрашивает следующее best-effort окно примерно через час. iOS сама решает, когда дать фон. Это не гарантирует расписание запуска и не заменяет серверный мониторинг.
+
+## Уведомления и APNs
+
+Разрешение запрашивается после выбора группы. В текущей версии изменение обнаруживается и уведомляется только при следующем запуске обновления на устройстве; фоновая проверка ограничена политикой iOS. Push backend/токены в этой поставке не настроены.
+
+Для серверных push потребуется отдельный защищённый backend: периодически получать страницы oat.ru, сохранять baseline по корпусам и группам, сравнивать записи и отправлять только новые/изменившиеся записи через APNs. На устройстве следует включить capability **Push Notifications** и **Background Modes → Remote notifications** (для фоновой доставки); Bundle ID должен совпадать с App ID. В Apple Developer создать APNs authentication key (`.p8`) и взять `Key ID` и `Team ID`; секретный файл хранить только в secret storage сервера. На сервере также настроить `Bundle ID`, APNs environment (development/production), безопасную регистрацию токена и удаление недействительных токенов по ответу APNs. `.p8`, device token и production credentials нельзя добавлять в Git. Для локального best-effort refresh достаточно текущего `BGTaskScheduler` identifier `ru.oat.schedule.refresh` и `UIBackgroundModes: fetch` в `project.yml`.
+
+Push требует развернутого watcher API и хранения подписок. Приложение намеренно не собирает имя, телефон, email или геолокацию; серверной подписке достаточно device token, группы и категории корпуса.
+
+## Известные ограничения
+
+- Источник контролируется колледжем, поэтому изменение HTML может потребовать поправки только `OATParser`.
+- Network panel/сырые response headers были недоступны в браузерной среде. Видимый DOM показал данные в HTML-таблицах и не выявил признаков нужного JSON endpoint, но отсутствие любого внутреннего API не проверено на сетевой трассе.
+- Связь списка категорий изменений с корпусами использует соответствующий порядок двух списков с сайта; при разном порядке сопоставление следует заменить сравнением адресов после повторной проверки исходной разметки.
+- В расписании отображается активная учебная неделя, опубликованная сайтом, и обе недельные таблицы. Модель сохраняет подгруппы и пустые дни.
+- Полные HTML fixture ответы и выполнение тестов должны быть добавлены/подтверждены на Mac при доступе к исходным ответам и Apple toolchain.
+
