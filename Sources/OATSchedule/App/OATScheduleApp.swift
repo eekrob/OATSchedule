@@ -57,15 +57,13 @@ struct RootView: View {
     @State private var deepLinkedChangeID: String?
     @State private var selectedTab = 0
     var body: some View {
-        Group {
-            if let selection {
-                MainTabView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID, selectedTab: $selectedTab)
-            } else {
-                OnboardingView {
-                    selection = $0
-                    app.store.write($0, key: "selection")
-                    Task { await app.refresh(selection: $0) }
-                }
+        if let selection {
+            MainTabView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID, selectedTab: $selectedTab)
+        } else {
+            OnboardingView {
+                selection = $0
+                app.store.write($0, key: "selection")
+                Task { await app.refresh(selection: $0) }
             }
         }
         .task {
@@ -114,3 +112,4 @@ struct MainTabView: View {
         }
     }
 }
+
