@@ -111,4 +111,3 @@ struct OnboardingView: View {
         catch { self.error = error.localizedDescription }
     }
 }
-

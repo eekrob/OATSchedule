@@ -42,4 +42,3 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ru.oat.schedule.tests
         SWIFT_VERSION: 5.0
         GENERATE_INFOPLIST_FILE: YES
-

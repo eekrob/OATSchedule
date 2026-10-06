@@ -58,7 +58,7 @@ struct ChangesView: View {
                     VStack(spacing: 0) {
                         Picker("Фильтр", selection: $scope) {
                             Text("Моя группа").tag(0); Text("Все").tag(1)
-                        }.pickerStyle(.segmented).padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
+                        }.pickerStyle(.segmented).padding(.horizontal).padding(.top, 4).padding(.bottom, 10)
                         if let error = model.error, model.changes.isEmpty {
                             ContentUnavailableView("Не удалось загрузить изменения", systemImage: "wifi.exclamationmark", description: Text(error))
                         } else {
@@ -72,7 +72,7 @@ struct ChangesView: View {
                                             ForEach(items) { change in
                                                 ChangeCard(change: change, isHighlighted: deepLinkedChangeID == change.stableID)
                                             }
-                                        }.padding(.horizontal).padding(.vertical, 8)
+                                        }.padding(.horizontal).padding(.vertical, 10)
                                     }.background(Color(uiColor: .systemGroupedBackground))
                                         .onChange(of: deepLinkedChangeID) { _, id in scroll(to: id, proxy: proxy) }
                                         .onChange(of: model.changes) { _, _ in scroll(to: deepLinkedChangeID, proxy: proxy) }
@@ -83,6 +83,7 @@ struct ChangesView: View {
                     }
                     .refreshable { await model.load(force: true) }
                     .navigationTitle("Изменения")
+                    .navigationBarTitleDisplayMode(.large)
                     .toolbar { if model.isLoading { ToolbarItem(placement: .topBarTrailing) { ProgressView() } } }
                 } else { ProgressView() }
             }
@@ -124,8 +125,8 @@ private struct ChangeCard: View {
             }.fixedSize(horizontal: false, vertical: true)
             if let reason = change.reason { Label(reason, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
         }
-        .padding(14).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).stroke(isHighlighted ? Color.indigo : .clear, lineWidth: 2))
+        .padding(15).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(isHighlighted ? Color.blue : color.opacity(0.12), lineWidth: isHighlighted ? 2 : 1))
         .accessibilityElement(children: .combine)
         .id(change.id)
     }
@@ -149,4 +150,3 @@ private struct ChangeCard: View {
         }.frame(maxWidth: .infinity, alignment: .leading).opacity(faded ? 0.75 : 1)
     }
 }
-

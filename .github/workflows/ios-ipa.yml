@@ -78,4 +78,3 @@ jobs:
           path: ${{ runner.temp }}/ipa/OATSchedule.ipa
           if-no-files-found: error
           retention-days: 14
-

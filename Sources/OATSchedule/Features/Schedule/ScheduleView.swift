@@ -52,8 +52,10 @@ struct ScheduleView: View {
                             } else { ProgressView("Загружаю расписание…").frame(maxWidth: .infinity).padding(.top, 50) }
                         }.padding()
                     }
+                    .background(Color(uiColor: .systemGroupedBackground))
                     .refreshable { await model.load(force: true) }
                     .navigationTitle("Расписание")
+                    .navigationBarTitleDisplayMode(.large)
                     .toolbar { ToolbarItem(placement: .topBarTrailing) { if model.isLoading { ProgressView() } } }
                 }
             }
@@ -111,7 +113,7 @@ struct ScheduleView: View {
                     }.buttonStyle(.plain)
                 }
             }
-        }.padding(10).background(Color(uiColor: .secondarySystemBackground).opacity(0.55), in: RoundedRectangle(cornerRadius: 20))
+        }.padding(10).background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
     private var weekRangeTitle: String {
         let end = OmskCalendar.calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
@@ -154,7 +156,7 @@ struct ScheduleView: View {
                     }
                     ProgressView(value: progress).tint(.teal)
                     Text("До конца \(max(0, Int(period.end.timeIntervalSince(now) / 60))) мин").font(.caption).foregroundStyle(.secondary)
-                }.padding(15).frame(maxWidth: .infinity, alignment: .leading).background(LinearGradient(colors: [.green.opacity(0.15), .blue.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20))
+                }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(LinearGradient(colors: [Color.green.opacity(0.13), Color.blue.opacity(0.07)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.green.opacity(0.08), lineWidth: 1))
             } else if let next, let period = interval(next), period.start > now {
                 Label("Следующая пара через \(max(0, Int(period.start.timeIntervalSince(now) / 60))) мин", systemImage: "clock").font(.subheadline).foregroundStyle(.secondary)
             }
@@ -197,4 +199,3 @@ private struct LessonCard: View {
         .accessibilityElement(children: .combine)
     }
 }
-

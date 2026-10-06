@@ -227,4 +227,3 @@ struct LocalNotificationService: NotificationServiceProtocol {
     }
 }
 
-

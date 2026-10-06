@@ -56,4 +56,3 @@ final class OATParserTests: XCTestCase {
         XCTAssertEqual(new.newRoom, "215")
     }
 }
-
