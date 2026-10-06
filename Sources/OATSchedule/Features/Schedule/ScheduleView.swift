@@ -1,6 +1,5 @@
 import SwiftUI
 import Combine
-import UIKit
 
 @Observable @MainActor
 final class ScheduleViewModel {
@@ -38,16 +37,18 @@ struct ScheduleView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
                             header(model)
-                            weekPicker(model)
                             dayPicker
                             if let error = model.error, model.schedule == nil {
                                 ContentUnavailableView("Не удалось загрузить расписание", systemImage: "wifi.exclamationmark", description: Text(error))
                             } else if let schedule = model.schedule {
                                 if let banner = model.error { Label(banner, systemImage: "wifi.slash").font(.caption).foregroundStyle(.orange) }
-                                currentLesson(schedule)
                                 let dayLessons = lessons(schedule)
-                                if dayLessons.isEmpty { ContentUnavailableView("На этот день занятий нет", systemImage: "sun.max") }
-                                else { ForEach(dayLessons) { LessonCard(lesson: $0) } }
+                                if dayLessons.isEmpty { emptyDay }
+                                else {
+                                    currentLesson(schedule)
+                                    Text("Дальше сегодня").font(.headline)
+                                    ForEach(dayLessons) { LessonCard(lesson: $0) }
+                                }
                             } else { ProgressView("Загружаю расписание…").frame(maxWidth: .infinity).padding(.top, 50) }
                         }.padding()
                     }
@@ -67,26 +68,33 @@ struct ScheduleView: View {
 
     private func header(_ model: ScheduleViewModel) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(selection.group.name).font(.largeTitle.bold())
-            Text(formattedDate(selectedDate, pattern: "EEEE, d MMMM"))
-                .font(.title3).foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Расписание").font(.largeTitle.bold())
+                    Text(selection.group.name).font(.title3.weight(.medium)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "airplane").font(.title2).foregroundStyle(.blue)
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "calendar").foregroundStyle(.blue)
+                Text(formattedDate(selectedDate, pattern: "EEEE, d MMMM")).font(.subheadline.weight(.medium))
+            }
             if let fetchedAt = model.fetchedAt {
-                Text("Обновлено \(fetchedAt.formatted(date: .omitted, time: .shortened)) · Омск").font(.caption).foregroundStyle(.secondary)
+                Text("Обновлено \(fetchedAt.formatted(date: .omitted, time: .shortened)) · Омск").font(.caption).foregroundStyle(.tertiary)
             }
         }
     }
-    private func weekPicker(_ model: ScheduleViewModel) -> some View {
-        HStack {
-            Text("Учебная неделя").font(.subheadline.weight(.semibold))
-            Spacer()
-            Picker("Учебная неделя", selection: $selectedWeek) {
-                Text("1").tag(1); Text("2").tag(2)
-            }.pickerStyle(.segmented).frame(width: 120)
-        }
-    }
     private var dayPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 9) {
+        VStack(spacing: 10) {
+            HStack {
+                Button { selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: -7, to: selectedDate) ?? selectedDate } label: { Image(systemName: "chevron.left") }
+                Spacer()
+                Text(weekRangeTitle).font(.subheadline.weight(.medium))
+                Spacer()
+                Button { selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: 7, to: selectedDate) ?? selectedDate } label: { Image(systemName: "chevron.right") }
+            }.buttonStyle(.plain).foregroundStyle(.primary)
+            HStack(spacing: 5) {
                 ForEach(0..<7, id: \.self) { offset in
                     let date = OmskCalendar.calendar.date(byAdding: .day, value: offset, to: weekStart) ?? selectedDate
                     Button {
@@ -98,12 +106,23 @@ struct ScheduleView: View {
                             Text(formattedDate(date, pattern: "d")).font(.headline)
                         }
                         .foregroundStyle(isSelected(date) ? Color.white : Color.primary)
-                        .frame(width: 43, height: 56)
-                        .background(isSelected(date) ? Color.indigo : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                        .frame(maxWidth: .infinity).frame(height: 58)
+                        .background(isSelected(date) ? Color.blue : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
                     }.buttonStyle(.plain)
                 }
             }
-        }
+        }.padding(10).background(Color(uiColor: .secondarySystemBackground).opacity(0.55), in: RoundedRectangle(cornerRadius: 20))
+    }
+    private var weekRangeTitle: String {
+        let end = OmskCalendar.calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
+        return "\(formattedDate(weekStart, pattern: "d"))–\(formattedDate(end, pattern: "d MMMM"))"
+    }
+    private var emptyDay: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "calendar.badge.checkmark").font(.system(size: 48)).foregroundStyle(.blue.opacity(0.65))
+            Text("На сегодня занятий нет").font(.title3.bold()).multilineTextAlignment(.center)
+            Text("Ближайшие занятия — в следующий учебный день.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }.frame(maxWidth: .infinity).padding(.vertical, 54)
     }
     private func formattedDate(_ date: Date, pattern: String) -> String {
         let formatter = DateFormatter()
@@ -119,13 +138,25 @@ struct ScheduleView: View {
         return Group {
             if let current, let period = interval(current) {
                 let progress = min(1, max(0, now.timeIntervalSince(period.start) / max(1, period.duration)))
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Сейчас · \(current.subject)", systemImage: "bolt.fill").font(.headline)
-                    ProgressView(value: progress).tint(.indigo)
+                VStack(alignment: .leading, spacing: 11) {
+                    Label("Сейчас", systemImage: "circle.fill").font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 6).background(.green, in: Capsule()).foregroundStyle(.white)
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(current.number) пара").font(.headline)
+                            Text("\(current.start) – \(current.end)").font(.subheadline.monospacedDigit())
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(current.subject).font(.subheadline.weight(.semibold)).multilineTextAlignment(.trailing)
+                            if let teacher = current.teacher { Text(teacher).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
+                            if let room = current.room { Text("каб. \(room)").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    ProgressView(value: progress).tint(.teal)
                     Text("До конца \(max(0, Int(period.end.timeIntervalSince(now) / 60))) мин").font(.caption).foregroundStyle(.secondary)
-                }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.indigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
+                }.padding(15).frame(maxWidth: .infinity, alignment: .leading).background(LinearGradient(colors: [.green.opacity(0.15), .blue.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20))
             } else if let next, let period = interval(next), period.start > now {
-                Text("Следующая пара через \(max(0, Int(period.start.timeIntervalSince(now) / 60))) мин").font(.subheadline).foregroundStyle(.secondary)
+                Label("Следующая пара через \(max(0, Int(period.start.timeIntervalSince(now) / 60))) мин", systemImage: "clock").font(.subheadline).foregroundStyle(.secondary)
             }
         }
     }
@@ -162,7 +193,6 @@ private struct LessonCard: View {
         .contextMenu {
             let shareText = [lesson.subject, period, lesson.teacher, lesson.room.map { "Ауд. \($0)" }].compactMap { $0 }.joined(separator: "\n")
             ShareLink(item: shareText) { Label("Поделиться", systemImage: "square.and.arrow.up") }
-            Button { UIPasteboard.general.string = shareText } label: { Label("Скопировать", systemImage: "doc.on.doc") }
         }
         .accessibilityElement(children: .combine)
     }
