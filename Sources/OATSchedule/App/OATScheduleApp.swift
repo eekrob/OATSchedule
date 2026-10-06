@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         return true
     }
+
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         if let changeID = info["changeID"] as? String {
@@ -30,6 +31,7 @@ struct BootstrapView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var container: AppContainer?
     @AppStorage("appearance") private var appearance = "system"
+
     var body: some View {
         Group {
             if let container { RootView().environment(container) }
@@ -37,8 +39,7 @@ struct BootstrapView: View {
         }
         .task {
             guard container == nil else { return }
-            let created = AppContainer(context: modelContext)
-            container = created
+            container = AppContainer(context: modelContext)
         }
         .preferredColorScheme((AppearanceMode.Value(rawValue: appearance) ?? .system).colorScheme)
     }
@@ -46,13 +47,26 @@ struct BootstrapView: View {
 
 enum AppearanceMode {
     static var current: AppearanceMode.Value {
-        get { Value(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "system") ?? .system }
+        Value(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "system") ?? .system
     }
+
     enum Value: String, CaseIterable, Identifiable {
         case system, light, dark
         var id: String { rawValue }
-        var title: String { switch self { case .system: "Системное"; case .light: "Светлое"; case .dark: "Тёмное" } }
-        var colorScheme: ColorScheme? { switch self { case .system: nil; case .light: .light; case .dark: .dark } }
+        var title: String {
+            switch self {
+            case .system: "Системное"
+            case .light: "Светлое"
+            case .dark: "Тёмное"
+            }
+        }
+        var colorScheme: ColorScheme? {
+            switch self {
+            case .system: nil
+            case .light: .light
+            case .dark: .dark
+            }
+        }
     }
 }
 
@@ -61,6 +75,7 @@ struct RootView: View {
     @State private var selection: UserSelection?
     @State private var deepLinkedChangeID: String?
     @State private var selectedTab = 0
+
     var body: some View {
         Group {
             if let selection {
@@ -69,6 +84,10 @@ struct RootView: View {
                 OnboardingView { newSelection in
                     selection = newSelection
                     app.store.write(newSelection, key: "selection")
+                    if UserDefaults.standard.bool(forKey: "testMode"),
+                       let data = try? JSONEncoder().encode(newSelection) {
+                        UserDefaults.standard.set(data, forKey: "demoSelection")
+                    }
                     Task { await app.refresh(selection: newSelection) }
                 }
             }
@@ -76,6 +95,10 @@ struct RootView: View {
         .task {
             if let restored = app.store.read(UserSelection.self, key: "selection") {
                 selection = restored
+                if UserDefaults.standard.bool(forKey: "testMode"),
+                   let data = try? JSONEncoder().encode(restored) {
+                    UserDefaults.standard.set(data, forKey: "demoSelection")
+                }
                 Task { await app.refresh(selection: restored) }
             }
             if let pending = UserDefaults.standard.string(forKey: "pendingChangeID") {
@@ -94,7 +117,11 @@ struct RootView: View {
             selectedTab = 1
             UserDefaults.standard.removeObject(forKey: "pendingChangeID")
         }
-        .onReceive(NotificationCenter.default.publisher(for: .resetSelection)) { _ in selection = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .resetSelection)) { _ in
+            UserDefaults.standard.set(false, forKey: "testMode")
+            UserDefaults.standard.removeObject(forKey: "demoSelection")
+            selection = nil
+        }
     }
 }
 
@@ -105,17 +132,35 @@ struct MainTabView: View {
     let selection: UserSelection
     @Binding var deepLinkedChangeID: String?
     @Binding var selectedTab: Int
+    @AppStorage("testMode") private var testMode = false
+
     var body: some View {
-        TabView(selection: $selectedTab) {
-            ScheduleView(selection: selection)
-                .tabItem { Label("Расписание", systemImage: "calendar") }
-                .tag(0)
-            ChangesView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID)
-                .tabItem { Label("Изменения", systemImage: "arrow.triangle.2.circlepath") }
-                .tag(1)
-            SettingsView(selection: selection)
-                .tabItem { Label("Настройки", systemImage: "gearshape") }
-                .tag(2)
+        VStack(spacing: 0) {
+            if testMode {
+                HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                    Text("Тестовый режим — данные демонстрационные")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.12))
+                .accessibilityLabel("Тестовый режим. Данные демонстрационные.")
+            }
+
+            TabView(selection: $selectedTab) {
+                ScheduleView(selection: selection)
+                    .tabItem { Label("Расписание", systemImage: "calendar") }
+                    .tag(0)
+                ChangesView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID)
+                    .tabItem { Label("Изменения", systemImage: "arrow.triangle.2.circlepath") }
+                    .tag(1)
+                SettingsView(selection: selection)
+                    .tabItem { Label("Настройки", systemImage: "gearshape") }
+                    .tag(2)
+            }
         }
     }
 }
