@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import BackgroundTasks
 import UserNotifications
 import UIKit
 
@@ -38,9 +37,6 @@ struct BootstrapView: View {
         .task {
             guard container == nil else { return }
             let created = AppContainer(context: modelContext)
-            created.refreshCoordinator.register {
-                if let selection = created.store.read(UserSelection.self, key: "selection") { await created.refresh(selection: selection) }
-            }
             container = created
         }
         .preferredColorScheme(nil)
