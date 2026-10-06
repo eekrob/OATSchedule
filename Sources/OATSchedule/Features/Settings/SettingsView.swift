@@ -20,7 +20,7 @@ struct SettingsView: View {
                     Button(notificationEnabled ? "Разрешение запрошено" : "Включить уведомления") {
                         Task { notificationEnabled = await app.notifications.requestAuthorization() }
                     }.disabled(notificationEnabled)
-                    Text("Системный фоновый запуск iOS работает в режиме best effort; момент обновления не гарантируется.")
+                    Text("Обновление выполняется при открытии приложения или вручную. Для push в фоне нужен серверный backend.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Источник и приложение") {
@@ -32,3 +32,4 @@ struct SettingsView: View {
         }
     }
 }
+
