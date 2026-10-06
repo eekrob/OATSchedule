@@ -40,8 +40,14 @@ final class LocalStore {
 
 protocol ScheduleServiceProtocol {
     func loadCategories() async throws -> [CollegeCategory]
+    func loadCategories(timeout: TimeInterval) async throws -> [CollegeCategory]
     func loadGroups(in category: CollegeCategory) async throws -> [StudentGroup]
+    func loadGroups(in category: CollegeCategory, timeout: TimeInterval) async throws -> [StudentGroup]
     func loadSchedule(for group: StudentGroup) async throws -> Schedule
+}
+extension ScheduleServiceProtocol {
+    func loadCategories(timeout: TimeInterval) async throws -> [CollegeCategory] { try await loadCategories() }
+    func loadGroups(in category: CollegeCategory, timeout: TimeInterval) async throws -> [StudentGroup] { try await loadGroups(in: category) }
 }
 protocol ChangesServiceProtocol {
     func loadCategories() async throws -> [CollegeCategory]
@@ -82,8 +88,20 @@ struct OATScheduleService: ScheduleServiceProtocol {
         guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
         return parsed.value
     }
+    func loadCategories(timeout: TimeInterval) async throws -> [CollegeCategory] {
+        let html = try await http.html(from: root, timeout: timeout, maxAttempts: 1)
+        let parsed = try parser.categories(from: html)
+        guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
+        return parsed.value
+    }
     func loadGroups(in category: CollegeCategory) async throws -> [StudentGroup] {
         let html = try await http.html(from: category.url)
+        let parsed = try parser.groups(from: html, category: category)
+        guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
+        return parsed.value
+    }
+    func loadGroups(in category: CollegeCategory, timeout: TimeInterval) async throws -> [StudentGroup] {
+        let html = try await http.html(from: category.url, timeout: timeout, maxAttempts: 1)
         let parsed = try parser.groups(from: html, category: category)
         guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
         return parsed.value

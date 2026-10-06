@@ -12,14 +12,16 @@ struct HTTPClient {
         self.session = session ?? URLSession(configuration: configuration)
     }
 
-    func html(from url: URL) async throws -> String {
+    func html(from url: URL, timeout: TimeInterval? = nil, maxAttempts: Int = 3) async throws -> String {
         var lastError: Error = AppFailure.badResponse
-        for attempt in 0..<3 {
+        for attempt in 0..<max(1, maxAttempts) {
             do {
-                let (data, response) = try await session.data(from: url)
+                var request = URLRequest(url: url)
+                if let timeout { request.timeoutInterval = timeout }
+                let (data, response) = try await session.data(for: request)
                 guard let response = response as? HTTPURLResponse else { throw AppFailure.badResponse }
                 guard (200..<300).contains(response.statusCode) else {
-                    if attempt < 2, response.statusCode == 408 || response.statusCode == 429 || response.statusCode >= 500 {
+                    if attempt + 1 < maxAttempts, response.statusCode == 408 || response.statusCode == 429 || response.statusCode >= 500 {
                         try await Task.sleep(for: .milliseconds(500 * (attempt + 1)))
                         continue
                     }
@@ -32,7 +34,7 @@ struct HTTPClient {
                 throw error
             } catch {
                 lastError = error
-                if attempt < 2 { try await Task.sleep(for: .milliseconds(350 * (attempt + 1))) }
+                if attempt + 1 < maxAttempts { try await Task.sleep(for: .milliseconds(350 * (attempt + 1))) }
             }
         }
         logger.error("Request failed after retries: \(lastError.localizedDescription, privacy: .public)")
