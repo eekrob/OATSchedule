@@ -27,8 +27,12 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(spacing: 22) {
             Spacer()
-            Image(systemName: "airplane.circle.fill").font(.system(size: 82)).symbolRenderingMode(.palette).foregroundStyle(.indigo, .cyan)
-            Text("ОмАВИАТ Расписание").font(.largeTitle.bold()).multilineTextAlignment(.center)
+            ZStack {
+                Circle().fill(LinearGradient(colors: [.blue.opacity(0.18), .cyan.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 230, height: 230)
+                Image(systemName: "cloud.fill").font(.system(size: 42)).foregroundStyle(.blue.opacity(0.12)).offset(x: -72, y: -44)
+                Image(systemName: "airplane").font(.system(size: 92, weight: .medium)).rotationEffect(.degrees(-12)).symbolRenderingMode(.palette).foregroundStyle(.blue, .cyan)
+            }
+            Text("ОмАВИАТ\nРасписание").font(.largeTitle.bold()).multilineTextAlignment(.center)
             Text("Расписание занятий и изменения всегда под рукой.").font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Spacer()
             Button("Начать") { step = 1; Task { await loadCategories() } }
@@ -107,3 +111,4 @@ struct OnboardingView: View {
         catch { self.error = error.localizedDescription }
     }
 }
+
