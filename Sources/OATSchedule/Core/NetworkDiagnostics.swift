@@ -1,6 +1,8 @@
 import Foundation
 
 actor NetworkDiagnosticsStore {
+    static let shared = NetworkDiagnosticsStore()
+
     private struct Event {
         let date: Date
         let kind: String
