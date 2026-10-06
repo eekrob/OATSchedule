@@ -22,6 +22,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
     info:
+      path: OATSchedule/Info.plist
       properties:
         CFBundleDisplayName: ОмАВИАТ Расписание
         UIBackgroundModes:
@@ -45,3 +46,4 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ru.oat.schedule.tests
         SWIFT_VERSION: 5.0
         GENERATE_INFOPLIST_FILE: YES
+
