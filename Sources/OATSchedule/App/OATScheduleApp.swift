@@ -60,10 +60,10 @@ struct RootView: View {
         if let selection {
             MainTabView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID, selectedTab: $selectedTab)
         } else {
-            OnboardingView {
-                selection = $0
-                app.store.write($0, key: "selection")
-                Task { await app.refresh(selection: $0) }
+            OnboardingView { newSelection in
+                selection = newSelection
+                app.store.write(newSelection, key: "selection")
+                Task { await app.refresh(selection: newSelection) }
             }
         }
         .task {
