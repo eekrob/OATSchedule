@@ -25,10 +25,6 @@ targets:
       path: OATSchedule/Info.plist
       properties:
         CFBundleDisplayName: ОмАВИАТ Расписание
-        UIBackgroundModes:
-          - fetch
-        BGTaskSchedulerPermittedIdentifiers:
-          - ru.oat.schedule.refresh
         CFBundleURLTypes:
           - CFBundleURLName: ru.oat.schedule
             CFBundleURLSchemes:
