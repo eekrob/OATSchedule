@@ -1,0 +1,170 @@
+name: iOS build and IPA
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package iOS app
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project OATSchedule.xcodeproj -scheme OATSchedule
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          DEVICE_ID="$(xcrun simctl list devices available -j | /usr/bin/python3 -c 'import json,sys; data=json.load(sys.stdin); devices=[d for group in data["devices"].values() for d in group if d["name"].startswith("iPhone") and d["isAvailable"]]; print(devices[0]["udid"] if devices else "")')"
+          if [[ -z "$DEVICE_ID" ]]; then
+            echo "No available iPhone simulator on this runner." >&2
+            exit 1
+          fi
+          echo "device_id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: >-
+          xcodebuild test
+          -project OATSchedule.xcodeproj
+          -scheme OATSchedule
+          -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.device_id }}'
+          -resultBundlePath "$RUNNER_TEMP/OATSchedule.xcresult"
+
+      - name: Import distribution certificate and provisioning profile
+        if: github.event_name != 'pull_request'
+        id: signing
+        shell: bash
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          BUNDLE_ID: ru.oat.schedule
+        run: |
+          set -euo pipefail
+          for name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then echo "Missing Actions secret: $name" >&2; exit 1; fi
+          done
+
+          CERT_PATH="$RUNNER_TEMP/distribution.p12"
+          PROFILE_PATH="$RUNNER_TEMP/app.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          KEYCHAIN_PATH="$RUNNER_TEMP/oat-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(/usr/bin/openssl rand -hex 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$IOS_CERTIFICATE_BASE64" | base64 -D > "$CERT_PATH"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$PROFILE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")
+          EXPECTED_APP_ID="$IOS_TEAM_ID.$BUNDLE_ID"
+          PROFILE_BUNDLE_PATTERN="${PROFILE_APP_ID#"$IOS_TEAM_ID."}"
+          if [[ "$PROFILE_APP_ID" != "$EXPECTED_APP_ID" && "$PROFILE_APP_ID" != "$IOS_TEAM_ID."* ]]; then
+            echo "Provisioning profile App ID does not match $BUNDLE_ID ($PROFILE_APP_ID)." >&2
+            exit 1
+          fi
+          if [[ "$PROFILE_APP_ID" != "$EXPECTED_APP_ID" && "$BUNDLE_ID" != $PROFILE_BUNDLE_PATTERN ]]; then
+            echo "Provisioning profile App ID pattern does not match $BUNDLE_ID ($PROFILE_APP_ID)." >&2
+            exit 1
+          fi
+
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          cp "$PROFILE_PATH" "$PROFILE_DIR/$PROFILE_UUID.mobileprovision"
+          {
+            echo "profile_uuid=$PROFILE_UUID"
+            echo "profile_name=$PROFILE_NAME"
+            echo "team_id=$IOS_TEAM_ID"
+            echo "keychain_path=$KEYCHAIN_PATH"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Archive signed iOS app
+        if: github.event_name != 'pull_request'
+        env:
+          TEAM_ID: ${{ steps.signing.outputs.team_id }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+        run: >-
+          xcodebuild archive
+          -project OATSchedule.xcodeproj
+          -scheme OATSchedule
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/OATSchedule.xcarchive"
+          CODE_SIGN_STYLE=Manual
+          CODE_SIGN_IDENTITY='Apple Distribution'
+          DEVELOPMENT_TEAM="$TEAM_ID"
+          PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"
+
+      - name: Export IPA
+        if: github.event_name != 'pull_request'
+        env:
+          TEAM_ID: ${{ steps.signing.outputs.team_id }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+          EXPORT_METHOD: ${{ vars.IPA_EXPORT_METHOD || 'app-store-connect' }}
+          BUNDLE_ID: ru.oat.schedule
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - <<'PY'
+          import os, plistlib
+          options = {
+              "method": os.environ["EXPORT_METHOD"],
+              "teamID": os.environ["TEAM_ID"],
+              "signingStyle": "manual",
+              "provisioningProfiles": {os.environ["BUNDLE_ID"]: os.environ["PROFILE_NAME"]},
+              "stripSwiftSymbols": True,
+              "uploadSymbols": True,
+          }
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions.plist"), "wb") as output:
+              plistlib.dump(options, output)
+          PY
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/OATSchedule.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/ipa"
+          test -n "$(find "$RUNNER_TEMP/ipa" -maxdepth 1 -name '*.ipa' -print -quit)"
+
+      - name: Upload signed IPA
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: OATSchedule-IPA-${{ github.sha }}
+          path: ${{ runner.temp }}/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove signing materials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/oat-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/distribution.p12" "$RUNNER_TEMP/app.mobileprovision" "$RUNNER_TEMP/profile.plist"

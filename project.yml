@@ -1,0 +1,47 @@
+name: OATSchedule
+options:
+  bundleIdPrefix: ru.oat
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup.git
+    from: 2.7.0
+targets:
+  OATSchedule:
+    type: application
+    platform: iOS
+    sources: [Sources/OATSchedule]
+    dependencies:
+      - package: SwiftSoup
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ru.oat.schedule
+        PRODUCT_NAME: OATSchedule
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+    info:
+      properties:
+        CFBundleDisplayName: ОмАВИАТ Расписание
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - ru.oat.schedule.refresh
+        CFBundleURLTypes:
+          - CFBundleURLName: ru.oat.schedule
+            CFBundleURLSchemes:
+              - omaviat
+  OATScheduleTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests/OATScheduleTests]
+    resources:
+      - Tests/OATScheduleTests/Fixtures
+    dependencies:
+      - target: OATSchedule
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ru.oat.schedule.tests
+        SWIFT_VERSION: 5.0
+        GENERATE_INFOPLIST_FILE: YES
