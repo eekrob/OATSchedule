@@ -109,7 +109,7 @@ private struct ChangeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("\(change.group) · \(change.date.formatted(.dateTime.day().month(.wide).locale(Locale(identifier: "ru_RU")).timeZone(OmskCalendar.timeZone)))")
+                Text("\(change.group) · \(formattedDate)")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text(change.isCancelled ? "Отмена" : change.isAdded ? "Добавление" : "Изменение")
@@ -128,6 +128,14 @@ private struct ChangeCard: View {
         .accessibilityElement(children: .combine)
         .id(change.id)
     }
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.calendar = OmskCalendar.calendar
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "d MMMM"
+        return formatter.string(from: change.date)
+    }
     private func changeSide(title: String, lesson: Int?, room: String?, subject: String?, teacher: String?, faded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
@@ -140,3 +148,4 @@ private struct ChangeCard: View {
         }.frame(maxWidth: .infinity, alignment: .leading).opacity(faded ? 0.75 : 1)
     }
 }
+
