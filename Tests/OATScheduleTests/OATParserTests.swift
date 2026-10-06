@@ -4,7 +4,11 @@ import XCTest
 final class OATParserTests: XCTestCase {
     private let parser = OATParser()
     private func fixture(_ name: String) throws -> String {
-        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: "html", subdirectory: "Fixtures"))
+        let bundle = Bundle(for: Self.self)
+        let url = try XCTUnwrap(
+            bundle.url(forResource: name, withExtension: "html", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: name, withExtension: "html")
+        )
         return try String(contentsOf: url, encoding: .utf8)
     }
 
@@ -52,3 +56,4 @@ final class OATParserTests: XCTestCase {
         XCTAssertEqual(new.newRoom, "215")
     }
 }
+
