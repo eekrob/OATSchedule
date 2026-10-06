@@ -5,6 +5,7 @@ struct SettingsView: View {
     let selection: UserSelection
     @State private var notificationEnabled = false
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("testDataMode") private var testDataMode = TestDataMode.live.rawValue
 
     var body: some View {
         NavigationStack {
@@ -17,6 +18,30 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         notificationRow("Изменения расписания", subtitle: "Новые замены и переносы", isOn: $notificationEnabled)
                     }.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+
+                    sectionTitle("Тестовый режим")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Источник данных", selection: $testDataMode) {
+                            ForEach(TestDataMode.allCases) { mode in
+                                Text(mode.title).tag(mode.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.blue)
+                        Text((TestDataMode(rawValue: testDataMode) ?? .live).detail)
+                            .font(.caption).foregroundStyle(.secondary)
+                        if testDataMode != TestDataMode.live.rawValue {
+                            Text("После смены источника выберите группу заново.")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    .onChange(of: testDataMode) { _, _ in
+                        app.store.remove(key: "selection")
+                        NotificationCenter.default.post(name: .resetSelection, object: nil)
+                    }
 
                     sectionTitle("Оформление")
                     VStack(spacing: 0) {

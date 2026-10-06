@@ -30,15 +30,15 @@ struct BootstrapView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var container: AppContainer?
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("testDataMode") private var testDataMode = TestDataMode.live.rawValue
     var body: some View {
         Group {
             if let container { RootView().environment(container) }
             else { ProgressView().tint(.indigo) }
         }
-        .task {
-            guard container == nil else { return }
-            let created = AppContainer(context: modelContext)
-            container = created
+        .task(id: testDataMode) {
+            let mode = TestDataMode(rawValue: testDataMode) ?? .live
+            container = AppContainer(context: modelContext, testDataMode: mode)
         }
         .preferredColorScheme((AppearanceMode.Value(rawValue: appearance) ?? .system).colorScheme)
     }

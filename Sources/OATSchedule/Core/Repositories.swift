@@ -52,6 +52,91 @@ protocol NotificationServiceProtocol {
     func notify(_ change: ScheduleChange) async
 }
 
+/// A local data source intended for screenshots, UI testing and demos when oat.ru is unavailable.
+/// It deliberately generates a new, plausible timetable on each request instead of shipping real
+/// student data with the application.
+enum TestDataMode: String, CaseIterable, Identifiable {
+    case live, demo, serverUnavailable
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .live: "Сайт колледжа"
+        case .demo: "Случайные данные"
+        case .serverUnavailable: "Сервер недоступен"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .live: "Загружать актуальные данные с oat.ru"
+        case .demo: "Тестовые корпуса, группы, пары и изменения"
+        case .serverUnavailable: "Проверить экран ошибки и сохранённый кеш"
+        }
+    }
+}
+
+struct DemoScheduleService: ScheduleServiceProtocol {
+    private let categories = [
+        CollegeCategory(title: "Авиационный корпус", slug: "aviation-demo", url: URL(string: "https://example.invalid/aviation")!),
+        CollegeCategory(title: "Машиностроительный корпус", slug: "engineering-demo", url: URL(string: "https://example.invalid/engineering")!),
+        CollegeCategory(title: "Корпус информационных технологий", slug: "it-demo", url: URL(string: "https://example.invalid/it")!)
+    ]
+
+    func loadCategories() async throws -> [CollegeCategory] { categories }
+
+    func loadGroups(in category: CollegeCategory) async throws -> [StudentGroup] {
+        let prefixes = ["aviation-demo": "АВ", "engineering-demo": "МС", "it-demo": "ИТ"]
+        let prefix = prefixes[category.slug] ?? "ТЕСТ"
+        return (1...6).map { index in
+            StudentGroup(name: "\(prefix)-2\(index)", url: URL(string: "https://example.invalid/\(category.slug)/\(index)")!, categoryID: category.id)
+        }
+    }
+
+    func loadSchedule(for group: StudentGroup) async throws -> Schedule {
+        let subjects = ["Аэродинамика", "Математика", "Информатика", "Материаловедение", "Английский язык", "Физическая культура", "Конструкция ЛА", "Программирование"]
+        let teachers = ["Иванова Е. А.", "Петров Д. В.", "Соколова М. Н.", "Кузнецов И. Р."]
+        let slots = [("08:30", "10:05"), ("10:20", "11:55"), ("12:25", "14:00"), ("14:15", "15:50")]
+        let week = Int.random(in: 1...2)
+        var lessons: [ScheduleLesson] = []
+        for weekday in 2...6 {
+            for number in 1...Int.random(in: 2...4) {
+                let slot = slots[number - 1]
+                lessons.append(ScheduleLesson(week: week, weekday: weekday, number: number, start: slot.0, end: slot.1,
+                    subject: subjects.randomElement()!, teacher: teachers.randomElement(), room: "\(Int.random(in: 101...428))", subgroup: Bool.random() ? nil : "Подгруппа \(Int.random(in: 1...2))", extra: nil))
+            }
+        }
+        return Schedule(groupName: group.name, lessons: lessons, currentWeek: week, fetchedAt: .now)
+    }
+}
+
+struct DemoChangesService: ChangesServiceProtocol {
+    private let schedule = DemoScheduleService()
+
+    func loadCategories() async throws -> [CollegeCategory] { try await schedule.loadCategories() }
+
+    func loadChanges(in category: CollegeCategory) async throws -> [ScheduleChange] {
+        let groups = try await schedule.loadGroups(in: category)
+        let group = groups[0].name
+        let date = OmskCalendar.calendar.date(byAdding: .day, value: Int.random(in: 0...5), to: .now) ?? .now
+        let cancelled = ScheduleChange(stableID: "demo-cancelled-\(category.id)", categoryID: category.id, group: group, date: date, course: "2 курс", oldLesson: 2, oldRoom: "214", oldSubject: "Математика", oldTeacher: "Иванова Е. А.", reason: "Отмена преподавателя", newLesson: nil, newRoom: nil, newSubject: nil, newTeacher: nil, rawText: "Тестовая отмена")
+        let added = ScheduleChange(stableID: "demo-added-\(category.id)", categoryID: category.id, group: group, date: date, course: "2 курс", oldLesson: nil, oldRoom: nil, oldSubject: nil, oldTeacher: nil, reason: "Дополнительная пара", newLesson: 4, newRoom: "318", newSubject: "Конструкция ЛА", newTeacher: "Петров Д. В.", rawText: "Тестовое добавление")
+        let updated = ScheduleChange(stableID: "demo-updated-\(category.id)", categoryID: category.id, group: groups[1].name, date: date, course: "3 курс", oldLesson: 3, oldRoom: "105", oldSubject: "Информатика", oldTeacher: "Соколова М. Н.", reason: "Замена аудитории", newLesson: 3, newRoom: "402", newSubject: "Информатика", newTeacher: "Соколова М. Н.", rawText: "Тестовое изменение")
+        return [cancelled, added, updated]
+    }
+}
+
+struct UnavailableScheduleService: ScheduleServiceProtocol {
+    func loadCategories() async throws -> [CollegeCategory] { throw AppFailure.network }
+    func loadGroups(in category: CollegeCategory) async throws -> [StudentGroup] { throw AppFailure.network }
+    func loadSchedule(for group: StudentGroup) async throws -> Schedule { throw AppFailure.network }
+}
+
+struct UnavailableChangesService: ChangesServiceProtocol {
+    func loadCategories() async throws -> [CollegeCategory] { throw AppFailure.network }
+    func loadChanges(in category: CollegeCategory) async throws -> [ScheduleChange] { throw AppFailure.network }
+}
+
 struct MockScheduleService: ScheduleServiceProtocol {
     let schedule: Schedule
     let categories: [CollegeCategory]
@@ -153,13 +238,23 @@ final class AppContainer {
     let notifications: any NotificationServiceProtocol
     init(
         context: ModelContext,
+        testDataMode: TestDataMode = .live,
         scheduleService: (any ScheduleServiceProtocol)? = nil,
         changesService: (any ChangesServiceProtocol)? = nil,
         notificationService: (any NotificationServiceProtocol)? = nil
     ) {
         let client = HTTPClient(); let parser = OATParser()
-        self.scheduleService = scheduleService ?? OATScheduleService(http: client, parser: parser)
-        self.changesService = changesService ?? OATChangesService(http: client, parser: parser)
+        switch testDataMode {
+        case .live:
+            self.scheduleService = scheduleService ?? OATScheduleService(http: client, parser: parser)
+            self.changesService = changesService ?? OATChangesService(http: client, parser: parser)
+        case .demo:
+            self.scheduleService = scheduleService ?? DemoScheduleService()
+            self.changesService = changesService ?? DemoChangesService()
+        case .serverUnavailable:
+            self.scheduleService = scheduleService ?? UnavailableScheduleService()
+            self.changesService = changesService ?? UnavailableChangesService()
+        }
         self.store = LocalStore(context: context)
         self.notifications = notificationService ?? LocalNotificationService()
     }
