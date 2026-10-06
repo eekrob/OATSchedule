@@ -235,7 +235,7 @@ struct BackgroundRefreshCoordinator {
     func register(handler: @escaping @MainActor () async -> Void) {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { task in
             guard let task = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
-            schedule()
+            Self.schedule()
             let work = Task { await handler(); task.setTaskCompleted(success: !Task.isCancelled) }
             task.expirationHandler = { work.cancel() }
         }
@@ -247,3 +247,4 @@ struct BackgroundRefreshCoordinator {
         try? BGTaskScheduler.shared.submit(request)
     }
 }
+
