@@ -3,10 +3,10 @@ import OSLog
 
 struct HTTPClient {
     private let session: URLSession
-    private let diagnostics: NetworkDiagnosticsStore?
+    private let diagnostics: NetworkDiagnosticsStore
     private let logger = Logger(subsystem: "ru.oat.schedule", category: "network")
 
-    init(session: URLSession? = nil, diagnostics: NetworkDiagnosticsStore? = nil) {
+    init(session: URLSession? = nil, diagnostics: NetworkDiagnosticsStore = .shared) {
         self.diagnostics = diagnostics
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 9
@@ -31,12 +31,12 @@ struct HTTPClient {
             do {
                 let (data, rawResponse) = try await session.data(from: url)
                 guard let response = rawResponse as? HTTPURLResponse else {
-                    await diagnostics?.recordTransportError(url: url, error: AppFailure.badResponse, attempt: attempt)
+                    await diagnostics.recordTransportError(url: url, error: AppFailure.badResponse, attempt: attempt)
                     throw AppFailure.badResponse
                 }
 
                 let decoded = decode(data)
-                await diagnostics?.recordHTTP(
+                await diagnostics.recordHTTP(
                     requestedURL: url,
                     response: response,
                     data: data,
@@ -61,7 +61,7 @@ struct HTTPClient {
                 throw error
             } catch {
                 lastError = error
-                await diagnostics?.recordTransportError(url: url, error: error, attempt: attempt)
+                await diagnostics.recordTransportError(url: url, error: error, attempt: attempt)
                 if attemptIndex == 0 { try? await Task.sleep(for: .milliseconds(450)) }
             }
         }
@@ -72,7 +72,7 @@ struct HTTPClient {
     }
 
     func recordParser(stage: String, url: URL, summary: String) async {
-        await diagnostics?.recordParser(stage: stage, url: url, summary: summary)
+        await diagnostics.recordParser(stage: stage, url: url, summary: summary)
     }
 
     private func decode(_ data: Data) -> (text: String?, encoding: String?) {
