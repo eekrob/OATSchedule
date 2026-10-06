@@ -68,7 +68,7 @@ struct ScheduleView: View {
     private func header(_ model: ScheduleViewModel) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(selection.group.name).font(.largeTitle.bold())
-            Text(selectedDate.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "ru_RU")).timeZone(OmskCalendar.timeZone)))
+            Text(formattedDate(selectedDate, pattern: "EEEE, d MMMM"))
                 .font(.title3).foregroundStyle(.secondary)
             if let fetchedAt = model.fetchedAt {
                 Text("Обновлено \(fetchedAt.formatted(date: .omitted, time: .shortened)) · Омск").font(.caption).foregroundStyle(.secondary)
@@ -93,9 +93,9 @@ struct ScheduleView: View {
                         withAnimation(.snappy) { selectedDate = date }
                     } label: {
                         VStack(spacing: 4) {
-                            Text(date.formatted(.dateTime.weekday(.narrow).locale(Locale(identifier: "ru_RU")).timeZone(OmskCalendar.timeZone)).uppercased())
+                            Text(formattedDate(date, pattern: "EEEEE").uppercased())
                                 .font(.caption2.weight(.semibold))
-                            Text(date.formatted(.dateTime.day().timeZone(OmskCalendar.timeZone))).font(.headline)
+                            Text(formattedDate(date, pattern: "d")).font(.headline)
                         }
                         .foregroundStyle(isSelected(date) ? Color.white : Color.primary)
                         .frame(width: 43, height: 56)
@@ -104,6 +104,14 @@ struct ScheduleView: View {
                 }
             }
         }
+    }
+    private func formattedDate(_ date: Date, pattern: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.calendar = OmskCalendar.calendar
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = pattern
+        return formatter.string(from: date)
     }
     private func currentLesson(_ schedule: Schedule) -> some View {
         let current = lessons(schedule).first { interval($0).map { $0.contains(now) } ?? false }
@@ -159,3 +167,4 @@ private struct LessonCard: View {
         .accessibilityElement(children: .combine)
     }
 }
+
