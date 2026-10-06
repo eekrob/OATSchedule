@@ -6,14 +6,21 @@ import UIKit
 @main
 struct OATScheduleApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
-        WindowGroup { BootstrapView() }
-            .modelContainer(for: CachedDocument.self)
+        WindowGroup {
+            BootstrapView()
+                .tint(OATTheme.blue)
+        }
+        .modelContainer(for: CachedDocument.self)
     }
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         return true
     }
@@ -33,9 +40,19 @@ struct BootstrapView: View {
     @AppStorage("appearance") private var appearance = "system"
 
     var body: some View {
-        Group {
-            if let container { RootView().environment(container) }
-            else { ProgressView().tint(.indigo) }
+        ZStack {
+            OATAppBackground()
+
+            Group {
+                if let container {
+                    RootView().environment(container)
+                } else {
+                    ProgressView()
+                        .controlSize(.large)
+                        .padding(28)
+                        .oatGlassSurface(radius: 24)
+                }
+            }
         }
         .task {
             guard container == nil else { return }
@@ -52,7 +69,9 @@ enum AppearanceMode {
 
     enum Value: String, CaseIterable, Identifiable {
         case system, light, dark
+
         var id: String { rawValue }
+
         var title: String {
             switch self {
             case .system: "Системное"
@@ -60,6 +79,7 @@ enum AppearanceMode {
             case .dark: "Тёмное"
             }
         }
+
         var colorScheme: ColorScheme? {
             switch self {
             case .system: nil
@@ -79,7 +99,11 @@ struct RootView: View {
     var body: some View {
         Group {
             if let selection {
-                MainTabView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID, selectedTab: $selectedTab)
+                MainTabView(
+                    selection: selection,
+                    deepLinkedChangeID: $deepLinkedChangeID,
+                    selectedTab: $selectedTab
+                )
             } else {
                 OnboardingView { newSelection in
                     selection = newSelection
@@ -101,6 +125,7 @@ struct RootView: View {
                 }
                 Task { await app.refresh(selection: restored) }
             }
+
             if let pending = UserDefaults.standard.string(forKey: "pendingChangeID") {
                 deepLinkedChangeID = pending
                 selectedTab = 1
@@ -125,8 +150,10 @@ struct RootView: View {
     }
 }
 
-extension Notification.Name { static let openChange = Notification.Name("OATOpenChange") }
-extension Notification.Name { static let resetSelection = Notification.Name("OATResetSelection") }
+extension Notification.Name {
+    static let openChange = Notification.Name("OATOpenChange")
+    static let resetSelection = Notification.Name("OATResetSelection")
+}
 
 struct MainTabView: View {
     let selection: UserSelection
@@ -135,31 +162,34 @@ struct MainTabView: View {
     @AppStorage("testMode") private var testMode = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            if testMode {
-                HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                    Text("Тестовый режим — данные демонстрационные")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                }
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.orange.opacity(0.12))
-                .accessibilityLabel("Тестовый режим. Данные демонстрационные.")
-            }
+        ZStack {
+            OATAppBackground()
 
-            TabView(selection: $selectedTab) {
-                ScheduleView(selection: selection)
-                    .tabItem { Label("Расписание", systemImage: "calendar") }
-                    .tag(0)
-                ChangesView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID)
-                    .tabItem { Label("Изменения", systemImage: "arrow.triangle.2.circlepath") }
-                    .tag(1)
-                SettingsView(selection: selection)
-                    .tabItem { Label("Настройки", systemImage: "gearshape") }
-                    .tag(2)
+            VStack(spacing: 0) {
+                if testMode {
+                    OATGlassStatusBanner(
+                        title: "Тестовый режим — данные демонстрационные",
+                        systemImage: "wrench.and.screwdriver.fill",
+                        tint: .orange
+                    )
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+                }
+
+                TabView(selection: $selectedTab) {
+                    ScheduleView(selection: selection)
+                        .tabItem { Label("Расписание", systemImage: "calendar") }
+                        .tag(0)
+
+                    ChangesView(selection: selection, deepLinkedChangeID: $deepLinkedChangeID)
+                        .tabItem { Label("Изменения", systemImage: "arrow.triangle.2.circlepath") }
+                        .tag(1)
+
+                    SettingsView(selection: selection)
+                        .tabItem { Label("Настройки", systemImage: "gearshape") }
+                        .tag(2)
+                }
+                .oatNativeTabBehavior()
             }
         }
     }
