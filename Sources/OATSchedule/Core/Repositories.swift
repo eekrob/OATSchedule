@@ -3,7 +3,6 @@ import SwiftData
 import Observation
 import UserNotifications
 import OSLog
-import BackgroundTasks
 
 @Model
 final class CachedDocument {
@@ -152,7 +151,6 @@ final class AppContainer {
     let changesService: any ChangesServiceProtocol
     let store: LocalStore
     let notifications: any NotificationServiceProtocol
-    let refreshCoordinator: BackgroundRefreshCoordinator
     init(
         context: ModelContext,
         scheduleService: (any ScheduleServiceProtocol)? = nil,
@@ -164,7 +162,6 @@ final class AppContainer {
         self.changesService = changesService ?? OATChangesService(http: client, parser: parser)
         self.store = LocalStore(context: context)
         self.notifications = notificationService ?? LocalNotificationService()
-        self.refreshCoordinator = BackgroundRefreshCoordinator()
     }
 
     func refresh(selection: UserSelection) async {
@@ -230,21 +227,4 @@ struct LocalNotificationService: NotificationServiceProtocol {
     }
 }
 
-struct BackgroundRefreshCoordinator {
-    static let identifier = "ru.oat.schedule.refresh"
-    func register(handler: @escaping @MainActor () async -> Void) {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { task in
-            guard let task = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
-            Self.schedule()
-            let work = Task { await handler(); task.setTaskCompleted(success: !Task.isCancelled) }
-            task.expirationHandler = { work.cancel() }
-        }
-        Self.schedule()
-    }
-    static func schedule() {
-        let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
-        try? BGTaskScheduler.shared.submit(request)
-    }
-}
 
