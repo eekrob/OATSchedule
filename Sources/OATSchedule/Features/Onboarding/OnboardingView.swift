@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct OnboardingView: View {
     @Environment(AppContainer.self) private var app
@@ -12,6 +13,7 @@ struct OnboardingView: View {
     @State private var query = ""
     @State private var isLoading = false
     @State private var error: String?
+    @State private var diagnosticCopied = false
     @AppStorage("testMode") private var testMode = false
 
     var body: some View {
@@ -65,21 +67,7 @@ struct OnboardingView: View {
     private var chooseGroup: some View {
         VStack(spacing: 12) {
             if testMode {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                        .foregroundStyle(.orange)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Тестовый режим")
-                            .font(.subheadline.bold())
-                        Text("Сайт ОмАВИАТ сейчас недоступен. Показываю демонстрационные группы и данные.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(12)
-                .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-                .padding(.horizontal)
+                testModeBanner
             }
 
             HStack(spacing: 10) {
@@ -100,6 +88,27 @@ struct OnboardingView: View {
             .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             .padding(.horizontal)
 
+            if !testMode, let error, !categories.isEmpty, chosenCategory != nil, groups.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Не удалось загрузить группы", systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Скопировать диагностику") { copyDiagnostics() }
+                            .buttonStyle(.bordered)
+                        Button("Тестовый режим") { activateTestMode() }
+                            .buttonStyle(.bordered)
+                    }
+                    .font(.caption)
+                }
+                .padding(12)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal)
+            }
+
             if categories.isEmpty && isLoading {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -115,6 +124,8 @@ struct OnboardingView: View {
                 } actions: {
                     Button("Повторить") { Task { await loadCategories(forceLive: true) } }
                         .buttonStyle(.borderedProminent)
+                    Button("Скопировать диагностику") { copyDiagnostics() }
+                        .buttonStyle(.bordered)
                     Button("Открыть тестовый режим") { activateTestMode() }
                         .buttonStyle(.bordered)
                 }
@@ -170,6 +181,44 @@ struct OnboardingView: View {
         }
     }
 
+    private var testModeBanner: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Тестовый режим")
+                        .font(.subheadline.bold())
+                    Text("Не удалось получить реальные данные OAT. Используются демонстрационные группы и расписание.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    copyDiagnostics()
+                } label: {
+                    Label(diagnosticCopied ? "Скопировано" : "Скопировать диагностику", systemImage: diagnosticCopied ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    Task { await loadCategories(forceLive: true) }
+                } label: {
+                    Label("Проверить сайт", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoading)
+            }
+            .font(.caption)
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal)
+    }
+
     private var filteredGroups: [StudentGroup] {
         let normalizedQuery = normalize(query)
         guard !normalizedQuery.isEmpty else { return groups }
@@ -218,17 +267,37 @@ struct OnboardingView: View {
         error = nil
         defer { isLoading = false }
 
+        if forceLive {
+            testMode = false
+            UserDefaults.standard.removeObject(forKey: "demoSelection")
+            categories = []
+            groups = []
+            chosenCategory = nil
+            chosenGroup = nil
+            await NetworkDiagnosticsStore.shared.recordAppEvent(
+                "LIVE RETRY",
+                details: "User requested another live oat.ru attempt from test mode."
+            )
+        }
+
         do {
             let loaded = try await app.scheduleService.loadCategories()
             guard !loaded.isEmpty else {
+                await NetworkDiagnosticsStore.shared.recordAppEvent(
+                    "TEST MODE FALLBACK",
+                    details: "loadCategories returned an empty array."
+                )
                 activateTestMode()
                 return
             }
             categories = loaded
-            if forceLive || testMode { testMode = false }
+            testMode = false
         } catch {
             self.error = error.localizedDescription
-            // No usable categories means the real app cannot continue. Fall back automatically.
+            await NetworkDiagnosticsStore.shared.recordAppEvent(
+                "TEST MODE FALLBACK",
+                details: "loadCategories failed: \(String(reflecting: type(of: error))) · \(error.localizedDescription)"
+            )
             activateTestMode()
         }
     }
@@ -246,6 +315,7 @@ struct OnboardingView: View {
         chosenCategory = category
         chosenGroup = nil
         groups = []
+        error = nil
         isLoading = true
         defer { isLoading = false }
 
@@ -259,6 +329,22 @@ struct OnboardingView: View {
             if groups.isEmpty { throw AppFailure.noData }
         } catch {
             self.error = error.localizedDescription
+            await NetworkDiagnosticsStore.shared.recordAppEvent(
+                "GROUP LOAD FAILED",
+                details: "category=\(category.slug) · \(String(reflecting: type(of: error))) · \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func copyDiagnostics() {
+        Task {
+            let report = await NetworkDiagnosticsStore.shared.report()
+            await MainActor.run {
+                UIPasteboard.general.string = report
+                diagnosticCopied = true
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            await MainActor.run { diagnosticCopied = false }
         }
     }
 
