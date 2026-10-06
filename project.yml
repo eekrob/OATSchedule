@@ -25,6 +25,7 @@ targets:
       path: OATSchedule/Info.plist
       properties:
         CFBundleDisplayName: ОмАВИАТ Расписание
+        UILaunchScreen: {}
         CFBundleURLTypes:
           - CFBundleURLName: ru.oat.schedule
             CFBundleURLSchemes:
