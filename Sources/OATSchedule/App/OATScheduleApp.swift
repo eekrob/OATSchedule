@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
 struct BootstrapView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.scenePhase) private var scenePhase
     @State private var container: AppContainer?
     var body: some View {
         Group {
@@ -43,9 +42,6 @@ struct BootstrapView: View {
                 if let selection = created.store.read(UserSelection.self, key: "selection") { await created.refresh(selection: selection) }
             }
             container = created
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { BackgroundRefreshCoordinator.schedule() }
         }
         .preferredColorScheme(nil)
     }
