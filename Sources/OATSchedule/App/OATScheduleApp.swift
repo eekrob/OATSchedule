@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 struct BootstrapView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var container: AppContainer?
+    @AppStorage("appearance") private var appearance = "system"
     var body: some View {
         Group {
             if let container { RootView().environment(container) }
@@ -39,7 +40,19 @@ struct BootstrapView: View {
             let created = AppContainer(context: modelContext)
             container = created
         }
-        .preferredColorScheme(nil)
+        .preferredColorScheme((AppearanceMode.Value(rawValue: appearance) ?? .system).colorScheme)
+    }
+}
+
+enum AppearanceMode {
+    static var current: AppearanceMode.Value {
+        get { Value(rawValue: UserDefaults.standard.string(forKey: "appearance") ?? "system") ?? .system }
+    }
+    enum Value: String, CaseIterable, Identifiable {
+        case system, light, dark
+        var id: String { rawValue }
+        var title: String { switch self { case .system: "Системное"; case .light: "Светлое"; case .dark: "Тёмное" } }
+        var colorScheme: ColorScheme? { switch self { case .system: nil; case .light: .light; case .dark: .dark } }
     }
 }
 
