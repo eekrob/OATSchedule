@@ -5,7 +5,7 @@
 ## Структура
 
 - `Sources/OATSchedule/Models` — доменные типы и календарь `Asia/Omsk`.
-- `Sources/OATSchedule/Core` — URLSession клиент, SwiftSoup parser, сервисы, SwiftData, diff, уведомления и фоновые задачи.
+- `Sources/OATSchedule/Core` — URLSession клиент, SwiftSoup parser, сервисы, SwiftData, diff и уведомления.
 - `Sources/OATSchedule/Features` — onboarding, расписание, изменения, настройки.
 - `Tests/OATScheduleTests/Fixtures` — компактные структурные HTML примеры для regression tests. Они воспроизводят наблюдаемую таблицу/ссылки, но не являются сохранёнными полными HTTP-ответами сайта: среда разработки позволила изучить отображённую структуру, но не выгрузить Network response.
 - `docs/OAT_RESEARCH.md` — фактическая структура источника и ограничения исследования.
@@ -34,13 +34,13 @@ Windows не содержит Apple SDK, Xcode, `xcodebuild` или Swift в PAT
 
 Все страницы используют HTTPS и общий `HTTPClient` (таймаут, User-Agent, ограниченный retry для сетевых ошибок и временных HTTP статусов). Кодировка декодируется как UTF-8 с fallback на Windows-1251. Кеш не удаляется при сбое сети; расписание и список изменений доступны offline. Обновление запускается при входе в экран и через pull-to-refresh.
 
-`BGAppRefreshTask` запрашивает следующее best-effort окно примерно через час. iOS сама решает, когда дать фон. Это не гарантирует расписание запуска и не заменяет серверный мониторинг.
+Автоматическое обновление выполняется при открытии приложения и через pull-to-refresh. Надёжные фоновые push-уведомления требуют отдельного защищённого backend.
 
 ## Уведомления и APNs
 
-Разрешение запрашивается после выбора группы. В текущей версии изменение обнаруживается и уведомляется только при следующем запуске обновления на устройстве; фоновая проверка ограничена политикой iOS. Push backend/токены в этой поставке не настроены.
+Разрешение запрашивается после выбора группы. В текущей версии изменение обнаруживается и уведомляется при следующем обновлении на устройстве. Push backend/токены в этой поставке не настроены.
 
-Для серверных push потребуется отдельный защищённый backend: периодически получать страницы oat.ru, сохранять baseline по корпусам и группам, сравнивать записи и отправлять только новые/изменившиеся записи через APNs. На устройстве следует включить capability **Push Notifications** и **Background Modes → Remote notifications** (для фоновой доставки); Bundle ID должен совпадать с App ID. В Apple Developer создать APNs authentication key (`.p8`) и взять `Key ID` и `Team ID`; секретный файл хранить только в secret storage сервера. На сервере также настроить `Bundle ID`, APNs environment (development/production), безопасную регистрацию токена и удаление недействительных токенов по ответу APNs. `.p8`, device token и production credentials нельзя добавлять в Git. Для локального best-effort refresh достаточно текущего `BGTaskScheduler` identifier `ru.oat.schedule.refresh` и `UIBackgroundModes: fetch` в `project.yml`.
+Для серверных push потребуется отдельный защищённый backend: периодически получать страницы oat.ru, сохранять baseline по корпусам и группам, сравнивать записи и отправлять только новые/изменившиеся записи через APNs. На устройстве следует включить capability **Push Notifications** и **Background Modes → Remote notifications** (для фоновой доставки); Bundle ID должен совпадать с App ID. В Apple Developer создать APNs authentication key (`.p8`) и взять `Key ID` и `Team ID`; секретный файл хранить только в secret storage сервера. На сервере также настроить `Bundle ID`, APNs environment (development/production), безопасную регистрацию токена и удаление недействительных токенов по ответу APNs. `.p8`, device token и production credentials нельзя добавлять в Git.
 
 Push требует развернутого watcher API и хранения подписок. Приложение намеренно не собирает имя, телефон, email или геолокацию; серверной подписке достаточно device token, группы и категории корпуса.
 
