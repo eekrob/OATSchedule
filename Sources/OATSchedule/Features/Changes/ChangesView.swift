@@ -58,7 +58,7 @@ struct ChangesView: View {
                     VStack(spacing: 0) {
                         Picker("Фильтр", selection: $scope) {
                             Text("Моя группа").tag(0); Text("Все").tag(1)
-                        }.pickerStyle(.segmented).padding()
+                        }.pickerStyle(.segmented).padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
                         if let error = model.error, model.changes.isEmpty {
                             ContentUnavailableView("Не удалось загрузить изменения", systemImage: "wifi.exclamationmark", description: Text(error))
                         } else {
@@ -67,12 +67,13 @@ struct ChangesView: View {
                                 ContentUnavailableView("Изменений нет", systemImage: "checkmark.circle", description: Text(scope == 0 ? "Для \(selection.group.name) пока всё по расписанию." : "Для выбранного корпуса пока нет опубликованных изменений."))
                             } else {
                                 ScrollViewReader { proxy in
-                                    List {
-                                        ForEach(items) { change in
-                                            ChangeCard(change: change, isHighlighted: deepLinkedChangeID == change.stableID)
-                                                .listRowSeparator(.hidden).listRowBackground(Color.clear)
-                                        }
-                                    }.listStyle(.plain)
+                                    ScrollView {
+                                        LazyVStack(spacing: 12) {
+                                            ForEach(items) { change in
+                                                ChangeCard(change: change, isHighlighted: deepLinkedChangeID == change.stableID)
+                                            }
+                                        }.padding(.horizontal).padding(.vertical, 8)
+                                    }.background(Color(uiColor: .systemGroupedBackground))
                                         .onChange(of: deepLinkedChangeID) { _, id in scroll(to: id, proxy: proxy) }
                                         .onChange(of: model.changes) { _, _ in scroll(to: deepLinkedChangeID, proxy: proxy) }
                                 }
@@ -109,13 +110,13 @@ private struct ChangeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("\(change.group) · \(formattedDate)")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
                 Text(change.isCancelled ? "Отмена" : change.isAdded ? "Добавление" : "Изменение")
                     .font(.caption.weight(.semibold)).padding(.horizontal, 9).padding(.vertical, 5)
                     .background(color.opacity(0.15), in: Capsule()).foregroundStyle(color)
+                Spacer()
+                Text(formattedDate).font(.caption.weight(.medium)).foregroundStyle(.secondary)
             }
+            Text(change.group).font(.headline)
             HStack(alignment: .top, spacing: 12) {
                 changeSide(title: "Было", lesson: change.oldLesson, room: change.oldRoom, subject: change.oldSubject, teacher: change.oldTeacher, faded: false)
                 Rectangle().fill(.quaternary).frame(width: 1)
