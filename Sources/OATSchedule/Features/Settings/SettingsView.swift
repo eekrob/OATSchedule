@@ -1,10 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AppContainer.self) private var app
     let selection: UserSelection
     @State private var notificationEnabled = false
+    @State private var diagnosticCopied = false
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("testMode") private var testMode = false
 
     var body: some View {
         NavigationStack {
@@ -12,6 +15,11 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     sectionTitle("Моя группа")
                     groupCard
+
+                    if testMode {
+                        sectionTitle("Тестовый режим")
+                        diagnosticsCard
+                    }
 
                     sectionTitle("Уведомления")
                     VStack(spacing: 0) {
@@ -66,6 +74,28 @@ struct SettingsView: View {
         }.padding(16).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
+    private var diagnosticsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Используются демонстрационные данные", systemImage: "wrench.and.screwdriver.fill")
+                .font(.subheadline.bold())
+                .foregroundStyle(.orange)
+            Text("Скопируйте технический отчёт и отправьте его разработчику — в нём есть HTTP-код, итоговый URL, размер ответа и фрагмент HTML. Значения cookies скрыты.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                copyDiagnostics()
+            } label: {
+                Label(diagnosticCopied ? "Диагностика скопирована" : "Скопировать диагностику", systemImage: diagnosticCopied ? "checkmark" : "doc.on.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+        }
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
     private func sectionTitle(_ title: String) -> some View {
         Text(title).font(.headline).padding(.bottom, -14)
     }
@@ -83,5 +113,17 @@ struct SettingsView: View {
                     if enabled { Task { notificationEnabled = await app.notifications.requestAuthorization() } }
                 }
         }.padding(16)
+    }
+
+    private func copyDiagnostics() {
+        Task {
+            let report = await NetworkDiagnosticsStore.shared.report()
+            await MainActor.run {
+                UIPasteboard.general.string = report
+                diagnosticCopied = true
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            await MainActor.run { diagnosticCopied = false }
+        }
     }
 }
