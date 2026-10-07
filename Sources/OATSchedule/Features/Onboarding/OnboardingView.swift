@@ -18,78 +18,54 @@ struct OnboardingView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                OATAppBackground()
-
-                Group {
-                    if step == 0 {
-                        welcome
-                    } else if step == 1 {
-                        chooseGroup
-                    } else {
-                        notifications
-                    }
-                }
+            Group {
+                if step == 0 { welcome }
+                else if step == 1 { chooseGroup }
+                else { notifications }
             }
+            .id(step)
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            ))
+            .animation(.snappy, value: step)
             .navigationTitle(step == 1 ? "Ваша группа" : "")
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 
     private var welcome: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 22) {
             Spacer()
-
             ZStack {
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [OATTheme.blue.opacity(0.28), OATTheme.cyan.opacity(0.08)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 236, height: 236)
-
-                Image(systemName: "calendar")
-                    .font(.system(size: 105, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
-
+                    .fill(LinearGradient(colors: [.blue.opacity(0.18), .cyan.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 230, height: 230)
+                Image(systemName: "cloud.fill")
+                    .font(.system(size: 42))
+                    .foregroundStyle(.blue.opacity(0.12))
+                    .offset(x: -72, y: -44)
                 Image(systemName: "airplane")
-                    .font(.system(size: 66, weight: .semibold))
-                    .rotationEffect(.degrees(-10))
-                    .foregroundStyle(OATTheme.blue)
-                    .offset(x: 20, y: 16)
+                    .font(.system(size: 92, weight: .medium))
+                    .rotationEffect(.degrees(-12))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.blue, .cyan)
             }
-            .padding(24)
-            .oatGlassSurface(radius: 54, tint: OATTheme.blue.opacity(0.06))
-
-            VStack(spacing: 8) {
-                Text("ОмАВИАТ Расписание")
-                    .font(.largeTitle.bold())
-                    .multilineTextAlignment(.center)
-
-                Text("Пары, изменения и уведомления — в одном приложении.")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
+            Text("ОмАВИАТ\nРасписание")
+                .font(.largeTitle.bold())
+                .multilineTextAlignment(.center)
+            Text("Расписание занятий и изменения всегда под рукой.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             Spacer()
-
-            Button {
-                step = 1
+            Button("Начать") {
+                withAnimation(.snappy) { step = 1 }
                 Task { await loadCategories() }
-            } label: {
-                HStack {
-                    Text("Начать")
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
-                .frame(maxWidth: .infinity)
             }
-            .oatGlassButton(prominent: true)
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .frame(maxWidth: .infinity)
         }
         .padding(24)
     }
@@ -103,22 +79,19 @@ struct OnboardingView: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-
                 TextField("Найти группу", text: $query)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
-
                 if !query.isEmpty {
                     Button { query = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 14)
-            .frame(height: 50)
-            .oatGlassSurface(radius: 16, interactive: true)
+            .frame(height: 48)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             .padding(.horizontal)
 
             if !testMode, let error, !categories.isEmpty, chosenCategory != nil, groups.isEmpty {
@@ -126,68 +99,42 @@ struct OnboardingView: View {
                     Label("Не удалось загрузить группы", systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.bold())
                         .foregroundStyle(.orange)
-
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
                     HStack {
                         Button("Скопировать диагностику") { copyDiagnostics() }
-                            .oatGlassButton()
+                            .buttonStyle(.bordered)
                         Button("Тестовый режим") { activateTestMode() }
-                            .oatGlassButton()
+                            .buttonStyle(.bordered)
                     }
                     .font(.caption)
                 }
-                .padding(14)
-                .oatGlassSurface(radius: 18, tint: .orange.opacity(0.08))
+                .padding(12)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal)
             }
 
             if categories.isEmpty && isLoading {
                 VStack(spacing: 12) {
                     ProgressView()
-                        .controlSize(.large)
                     Text("Загружаю список корпусов…")
                         .foregroundStyle(.secondary)
                 }
-                .padding(28)
-                .oatGlassSurface(radius: 24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
             } else if let error, categories.isEmpty {
-                VStack(spacing: 14) {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 42))
-                        .foregroundStyle(.orange)
-
-                    Text("Не удалось получить список")
-                        .font(.title3.bold())
-
+                ContentUnavailableView {
+                    Label("Не удалось получить список", systemImage: "wifi.exclamationmark")
+                } description: {
                     Text(error)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-
-                    Button("Повторить") {
-                        Task { await loadCategories(forceLive: true) }
-                    }
-                    .oatGlassButton(prominent: true)
-
-                    Button("Скопировать диагностику") {
-                        copyDiagnostics()
-                    }
-                    .oatGlassButton()
-
-                    Button("Открыть тестовый режим") {
-                        activateTestMode()
-                    }
-                    .oatGlassButton()
+                } actions: {
+                    Button("Повторить") { Task { await loadCategories(forceLive: true) } }
+                        .buttonStyle(.borderedProminent)
+                    Button("Скопировать диагностику") { copyDiagnostics() }
+                        .buttonStyle(.bordered)
+                    Button("Открыть тестовый режим") { activateTestMode() }
+                        .buttonStyle(.bordered)
                 }
-                .padding(20)
-                .oatGlassSurface(radius: 26)
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(categories) { category in
@@ -195,17 +142,14 @@ struct OnboardingView: View {
                             if chosenCategory?.id == category.id {
                                 ForEach(filteredGroups) { group in
                                     Button {
-                                        withAnimation(.snappy) {
-                                            chosenGroup = group
-                                        }
+                                        withAnimation(.snappy) { chosenGroup = group }
                                     } label: {
                                         HStack {
-                                            Text(group.name)
-                                                .foregroundStyle(.primary)
+                                            Text(group.name).foregroundStyle(.primary)
                                             Spacer()
                                             if chosenGroup?.id == group.id {
                                                 Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundStyle(OATTheme.blue)
+                                                    .foregroundStyle(Color.accentColor)
                                             }
                                         }
                                         .contentShape(Rectangle())
@@ -228,31 +172,24 @@ struct OnboardingView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
-                .oatClearScrollBackground()
             }
 
             if let chosenGroup {
-                Button {
-                    step = 2
-                } label: {
-                    HStack {
-                        Text("Продолжить")
-                        Spacer()
-                        Text(chosenGroup.name)
-                            .fontWeight(.semibold)
-                        Image(systemName: "arrow.right")
-                    }
-                    .frame(maxWidth: .infinity)
+                Button("Продолжить · \(chosenGroup.name)") {
+                    withAnimation(.snappy) { step = 2 }
                 }
-                .oatGlassButton(prominent: true)
-                .controlSize(.large)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
             }
         }
         .task {
             if categories.isEmpty { await loadCategories() }
         }
+        .animation(.snappy, value: chosenGroup?.id)
+        .animation(.snappy, value: chosenCategory?.id)
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
     }
 
     private var testModeBanner: some View {
@@ -260,7 +197,6 @@ struct OnboardingView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "wrench.and.screwdriver.fill")
                     .foregroundStyle(.orange)
-
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Тестовый режим")
                         .font(.subheadline.bold())
@@ -268,7 +204,6 @@ struct OnboardingView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-
                 Spacer()
             }
 
@@ -276,25 +211,22 @@ struct OnboardingView: View {
                 Button {
                     copyDiagnostics()
                 } label: {
-                    Label(
-                        diagnosticCopied ? "Скопировано" : "Скопировать",
-                        systemImage: diagnosticCopied ? "checkmark" : "doc.on.doc"
-                    )
+                    Label(diagnosticCopied ? "Скопировано" : "Скопировать диагностику", systemImage: diagnosticCopied ? "checkmark" : "doc.on.doc")
                 }
-                .oatGlassButton()
+                .buttonStyle(.bordered)
 
                 Button {
                     Task { await loadCategories(forceLive: true) }
                 } label: {
                     Label("Проверить сайт", systemImage: "arrow.clockwise")
                 }
-                .oatGlassButton()
+                .buttonStyle(.bordered)
                 .disabled(isLoading)
             }
             .font(.caption)
         }
-        .padding(14)
-        .oatGlassSurface(radius: 18, tint: .orange.opacity(0.08))
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal)
     }
 
@@ -305,46 +237,33 @@ struct OnboardingView: View {
     }
 
     private var notifications: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 18) {
             Spacer()
-
             Image(systemName: "bell.badge.fill")
-                .font(.system(size: 58))
+                .font(.system(size: 64))
                 .foregroundStyle(.orange)
-                .padding(24)
-                .oatGlassSurface(radius: 34, tint: .orange.opacity(0.08))
-
             Text("Узнавайте об изменениях сразу")
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
-
             Text("Мы сообщим, если для \(chosenGroup?.name ?? "вашей группы") появятся замены или отмены занятий.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-
             if testMode {
-                OATGlassStatusBanner(
-                    title: "В тестовом режиме используются демонстрационные изменения",
-                    systemImage: "wrench.and.screwdriver.fill",
-                    tint: .orange
-                )
+                Label("В тестовом режиме используются демонстрационные изменения", systemImage: "wrench.and.screwdriver")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
-
             Spacer()
-
             Button("Включить уведомления") {
                 Task {
                     _ = await app.notifications.requestAuthorization()
                     finish()
                 }
             }
-            .oatGlassButton(prominent: true)
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .frame(maxWidth: .infinity)
-
-            Button("Позже", action: finish)
-                .oatGlassButton()
-                .frame(maxWidth: .infinity)
+            Button("Позже", action: finish).frame(maxWidth: .infinity)
         }
         .padding(24)
     }
