@@ -80,6 +80,43 @@ final class OATParserTests: XCTestCase {
         XCTAssertFalse(parsed.value.lessons.contains { $0.week == 1 && $0.weekday == 5 })
     }
 
+    func testRenderedChangeDateLinksAreResolved() throws {
+        let category = CollegeCategory(
+            title: "Корпус 1",
+            slug: "b1",
+            url: URL(string: "https://www.oat.ru/timetable/Changes/b1")!
+        )
+        let html = """
+        <html><body>
+          <a href="07.10.2026">07.10.2026</a>
+          <button>08.10.2026</button>
+        </body></html>
+        """
+
+        let pages = try parser.changePages(from: html, category: category)
+        XCTAssertEqual(pages.count, 2)
+        XCTAssertTrue(
+            pages.contains {
+                $0.url.absoluteString == "https://www.oat.ru/timetable/Changes/b1/07.10.2026"
+            }
+        )
+        XCTAssertTrue(
+            pages.contains {
+                $0.url.absoluteString == "https://www.oat.ru/timetable/Changes/b1/08.10.2026"
+            }
+        )
+    }
+
+    func testRenderedChangePageDateSupportsRussianHeading() throws {
+        let html = """
+        <html><body><h1>Изменения в расписании на 07 октября (среда)</h1></body></html>
+        """
+        let date = try XCTUnwrap(parser.changePageDate(from: html))
+        let components = OmskCalendar.calendar.dateComponents([.day, .month], from: date)
+        XCTAssertEqual(components.day, 7)
+        XCTAssertEqual(components.month, 10)
+    }
+
     func testChangesIncludeReplacementAndCancellation() throws {
         let category = CollegeCategory(title: "Корпус 1", slug: "b1", url: URL(string: "https://www.oat.ru/timetable/Changes/b1")!)
         let parsed = try parser.changes(from: fixture("changes"), category: category, date: Date(timeIntervalSince1970: 1_791_331_200))
