@@ -1,4 +1,5 @@
 import Foundation
+import SwiftSoup
 
 actor NetworkDiagnosticsStore {
     static let shared = NetworkDiagnosticsStore()
@@ -39,6 +40,7 @@ actor NetworkDiagnosticsStore {
         ].filter { body.localizedCaseInsensitiveContains($0) }
 
         let preview = sanitizedPreview(body)
+        let structure = pageStructureSummary(body)
         let details = """
         attempt: \(attempt)
         requested: \(requestedURL.absoluteString)
@@ -55,6 +57,9 @@ actor NetworkDiagnosticsStore {
         /timetable/timetable/: \(timetableLinkCount)
         /timetable/Changes/: \(changesLinkCount)
         anti-bot markers: \(suspiciousMarkers.isEmpty ? "none" : suspiciousMarkers.joined(separator: ", "))
+        page structure:
+        \(structure)
+
         response preview:
         \(preview.isEmpty ? "<empty>" : preview)
         """
@@ -139,6 +144,103 @@ actor NetworkDiagnosticsStore {
             searchRange = range.upperBound..<haystack.endIndex
         }
         return count
+    }
+
+
+    private func pageStructureSummary(_ body: String) -> String {
+        guard !body.isEmpty else { return "<empty>" }
+        do {
+            let doc = try SwiftSoup.parse(body)
+            var lines: [String] = []
+
+            let timetableLinks = try doc.select("a[href]").array().compactMap { element -> String? in
+                let href = try element.attr("href")
+                guard href.localizedCaseInsensitiveContains("timetable")
+                    || href.localizedCaseInsensitiveContains("group")
+                    || href.localizedCaseInsensitiveContains("class")
+                else { return nil }
+                let text = try element.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                return "A text=[\(text)] href=[\(href)]"
+            }
+            lines.append("relevant anchors: \(timetableLinks.count)")
+            lines.append(contentsOf: timetableLinks.prefix(40))
+
+            let forms = try doc.select("form").array()
+            lines.append("forms: \(forms.count)")
+            for form in forms.prefix(12) {
+                let action = try form.attr("action")
+                let method = try form.attr("method")
+                let id = try form.attr("id")
+                let klass = try form.attr("class")
+                lines.append("FORM action=[\(action)] method=[\(method)] id=[\(id)] class=[\(klass)]")
+            }
+
+            let selects = try doc.select("select").array()
+            lines.append("selects: \(selects.count)")
+            for select in selects.prefix(12) {
+                let id = try select.attr("id")
+                let name = try select.attr("name")
+                let klass = try select.attr("class")
+                lines.append("SELECT id=[\(id)] name=[\(name)] class=[\(klass)]")
+                let options = try select.select("option").array()
+                for option in options.prefix(30) {
+                    let value = try option.attr("value")
+                    let text = try option.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                    lines.append("  OPTION text=[\(text)] value=[\(value)]")
+                }
+            }
+
+            let interactive = try doc.select("button, [onclick], [data-href], [data-url]").array()
+            let relevantInteractive = try interactive.compactMap { element -> String? in
+                let onclick = try element.attr("onclick")
+                let dataHref = try element.attr("data-href")
+                let dataURL = try element.attr("data-url")
+                let value = try element.attr("value")
+                let text = try element.text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let combined = [onclick, dataHref, dataURL, value, text].joined(separator: " ")
+                guard combined.localizedCaseInsensitiveContains("timetable")
+                    || combined.localizedCaseInsensitiveContains("group")
+                    || combined.localizedCaseInsensitiveContains("class")
+                    || combined.localizedCaseInsensitiveContains("распис")
+                    || combined.localizedCaseInsensitiveContains("груп")
+                else { return nil }
+                return "UI tag=[\(element.tagName())] text=[\(text)] onclick=[\(onclick)] data-href=[\(dataHref)] data-url=[\(dataURL)] value=[\(value)]"
+            }
+            lines.append("relevant interactive elements: \(relevantInteractive.count)")
+            lines.append(contentsOf: relevantInteractive.prefix(40))
+
+            let scripts = try doc.select("script").array()
+            var scriptHits: [String] = []
+            for script in scripts {
+                let src = try script.attr("src")
+                if !src.isEmpty,
+                   src.localizedCaseInsensitiveContains("timetable")
+                    || src.localizedCaseInsensitiveContains("schedule")
+                    || src.localizedCaseInsensitiveContains("group") {
+                    scriptHits.append("SCRIPT src=[\(src)]")
+                }
+
+                let code = try script.html()
+                guard code.localizedCaseInsensitiveContains("timetable")
+                    || code.localizedCaseInsensitiveContains("group")
+                    || code.localizedCaseInsensitiveContains("fetch(")
+                    || code.localizedCaseInsensitiveContains("$.ajax")
+                else { continue }
+
+                let compact = code
+                    .replacingOccurrences(of: "\r", with: " ")
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .split(whereSeparator: \.isWhitespace)
+                    .joined(separator: " ")
+                scriptHits.append("SCRIPT inline=[\(String(compact.prefix(1200)))]")
+            }
+            lines.append("relevant scripts: \(scriptHits.count)")
+            lines.append(contentsOf: scriptHits.prefix(12))
+
+            return lines.isEmpty ? "<none>" : lines.joined(separator: "\n")
+        } catch {
+            return "structure parse failed: \(error.localizedDescription)"
+        }
     }
 
     private func sanitizedPreview(_ body: String) -> String {
