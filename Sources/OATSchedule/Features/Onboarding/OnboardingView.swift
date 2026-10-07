@@ -318,7 +318,7 @@ struct OnboardingView: View {
                 .font(.title2.bold())
                 .multilineTextAlignment(.center)
 
-            Text("Мы сообщим, если для \\(chosenGroup?.name ?? \"вашей группы\") появятся замены или отмены занятий.")
+            Text("Мы сообщим, если для \(chosenGroup?.name ?? "вашей группы") появятся замены или отмены занятий.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
@@ -388,7 +388,7 @@ struct OnboardingView: View {
             self.error = error.localizedDescription
             await NetworkDiagnosticsStore.shared.recordAppEvent(
                 "TEST MODE FALLBACK",
-                details: "loadCategories failed: \\(String(reflecting: type(of: error))) · \\(error.localizedDescription)"
+                details: "loadCategories failed: \(String(reflecting: type(of: error))) · \(error.localizedDescription)"
             )
             activateTestMode()
         }
@@ -423,7 +423,7 @@ struct OnboardingView: View {
             self.error = error.localizedDescription
             await NetworkDiagnosticsStore.shared.recordAppEvent(
                 "GROUP LOAD FAILED",
-                details: "category=\\(category.slug) · \\(String(reflecting: type(of: error))) · \\(error.localizedDescription)"
+                details: "category=\(category.slug) · \(String(reflecting: type(of: error))) · \(error.localizedDescription)"
             )
         }
     }
