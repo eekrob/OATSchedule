@@ -259,12 +259,147 @@ struct OATParser {
 
     func changeDates(from html: String, categoryID: String) throws -> [Date] {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a").array()
-        let parser = DateFormatter(); parser.locale = Locale(identifier: "en_US_POSIX"); parser.timeZone = OmskCalendar.timeZone; parser.dateFormat = "dd.MM.yyyy"
-        return Array(Set(try links.compactMap { link -> Date? in
-            let text = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            return parser.date(from: text)
-        })).sorted()
+        var values: [Date] = []
+
+        for element in try doc.select("a, button, option, [role=button]").array() {
+            values.append(contentsOf: dates(in: try element.text()))
+            values.append(contentsOf: dates(in: try element.attr("href")))
+            values.append(contentsOf: dates(in: try element.attr("data-href")))
+            values.append(contentsOf: dates(in: try element.attr("data-url")))
+        }
+
+        if values.isEmpty {
+            values.append(contentsOf: dates(in: try doc.text()))
+        }
+
+        return Array(Set(values)).sorted()
+    }
+
+    func changePages(from html: String, category: CollegeCategory) throws -> [(date: Date, url: URL)] {
+        let doc = try SwiftSoup.parse(html)
+        var result: [(date: Date, url: URL)] = []
+        var seen = Set<String>()
+
+        for element in try doc.select("a, button, option, [role=button]").array() {
+            let text = try element.text()
+            let targets = [
+                try element.attr("href"),
+                try element.attr("data-href"),
+                try element.attr("data-url")
+            ]
+
+            var candidateDates = dates(in: text)
+            for target in targets {
+                candidateDates.append(contentsOf: dates(in: target))
+            }
+
+            for date in candidateDates {
+                let target = targets.first(where: { isUsableChangeTarget($0) })
+                let url = target.flatMap { resolveChangeTarget($0, category: category) }
+                    ?? category.url.appendingPathComponent(changeDateKey(date))
+
+                let key = "\(date.timeIntervalSince1970)|\(url.absoluteString)"
+                guard seen.insert(key).inserted else { continue }
+                result.append((date, url))
+            }
+        }
+
+        if result.isEmpty {
+            for date in try changeDates(from: html, categoryID: category.id) {
+                result.append((date, category.url.appendingPathComponent(changeDateKey(date))))
+            }
+        }
+
+        return result.sorted { $0.date > $1.date }
+    }
+
+    func changePageDate(from html: String) throws -> Date? {
+        let doc = try SwiftSoup.parse(html)
+        let text = try doc.text()
+
+        if let numeric = dates(in: text).first {
+            return numeric
+        }
+
+        let monthNumbers: [String: Int] = [
+            "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+            "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+            "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
+        ]
+
+        let pattern = #"(?i)\b(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let ns = text as NSString
+
+        guard let match = regex.firstMatch(
+            in: text,
+            range: NSRange(location: 0, length: ns.length)
+        ),
+        match.numberOfRanges >= 3,
+        let day = Int(ns.substring(with: match.range(at: 1))),
+        let month = monthNumbers[ns.substring(with: match.range(at: 2)).lowercased()]
+        else {
+            return nil
+        }
+
+        var components = OmskCalendar.calendar.dateComponents([.year], from: Date())
+        components.month = month
+        components.day = day
+        components.hour = 12
+        return OmskCalendar.calendar.date(from: components)
+    }
+
+    private func dates(in text: String) -> [Date] {
+        guard !text.isEmpty else { return [] }
+
+        let regex = try? NSRegularExpression(pattern: #"\b\d{1,2}\.\d{1,2}\.\d{4}\b"#)
+        let ns = text as NSString
+        let matches = regex?.matches(
+            in: text,
+            range: NSRange(location: 0, length: ns.length)
+        ) ?? []
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "d.M.yyyy"
+
+        return matches.compactMap { formatter.date(from: ns.substring(with: $0.range)) }
+    }
+
+    private func changeDateKey(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "dd.MM.yyyy"
+        return formatter.string(from: date)
+    }
+
+    private func isUsableChangeTarget(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty,
+              value != "#",
+              !value.lowercased().hasPrefix("javascript:")
+        else {
+            return false
+        }
+        return true
+    }
+
+    private func resolveChangeTarget(_ raw: String, category: CollegeCategory) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isUsableChangeTarget(value) else { return nil }
+
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return URL(string: value, relativeTo: base)?.absoluteURL
+        }
+
+        if value.lowercased().contains("timetable/changes/") || value.lowercased().hasPrefix("changes/") {
+            return URL(string: value, relativeTo: timetableBase)?.absoluteURL
+        }
+
+        let directory = category.url.appendingPathComponent("")
+        return URL(string: value, relativeTo: directory)?.absoluteURL
     }
 
     private func navigationTargets(from element: Element) throws -> [String] {
