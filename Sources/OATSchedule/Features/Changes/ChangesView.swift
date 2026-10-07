@@ -16,7 +16,7 @@ final class ChangesViewModel {
     }
 
     func load(force: Bool = false) async {
-        let key = "changes|selection|(selection.category.id)"
+        let key = "changes|selection|\\(selection.category.id)"
         if !force, changes.isEmpty, let cached = app.store.read([ScheduleChange].self, key: key) {
             changes = cached
         }
@@ -35,7 +35,7 @@ final class ChangesViewModel {
             }
 
             let fresh = try await app.changesService.loadChanges(in: changeCategories[index])
-            let categoryKey = "changes|(changeCategories[index].id)"
+            let categoryKey = "changes|\\(changeCategories[index].id)"
             let previous = app.store.read([ScheduleChange].self, key: categoryKey)
 
             if previous?.isEmpty == false && fresh.isEmpty {
@@ -61,7 +61,7 @@ final class ChangesViewModel {
                         .uppercased() == normalizedGroup
                     else { continue }
 
-                    let sentKey = "notified|(change.stableID)"
+                    let sentKey = "notified|\\(change.stableID)"
                     if app.store.read(Bool.self, key: sentKey) != true {
                         await app.notifications.notify(change)
                         app.store.write(true, key: sentKey)
@@ -181,7 +181,7 @@ struct ChangesView: View {
 
             Text(
                 scope == 0
-                    ? "Для (selection.group.name) пока всё по расписанию."
+                    ? "Для \\(selection.group.name) пока всё по расписанию."
                     : "Для выбранного корпуса пока нет опубликованных изменений."
             )
             .font(.subheadline)
@@ -336,7 +336,7 @@ private struct ChangeCard: View {
                 .foregroundStyle(.secondary)
 
             if let lesson {
-                Text("(lesson)-я пара")
+                Text("\\(lesson)-я пара")
                     .font(.caption.weight(.medium))
             }
 
@@ -346,7 +346,7 @@ private struct ChangeCard: View {
             }
 
             if let room, !room.isEmpty {
-                Text("Ауд. (room)")
+                Text("Ауд. \\(room)")
                     .font(.caption)
             }
 
