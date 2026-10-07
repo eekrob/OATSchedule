@@ -9,16 +9,60 @@ struct OATParser {
 
     func categories(from html: String) throws -> Parsed<[CollegeCategory]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/groups/]").array()
         var seen = Set<String>()
-        let result = try links.compactMap { link -> CollegeCategory? in
-            let url = try link.attr("href").absoluteURL(relativeTo: base)
-            let slug = url.lastPathComponent
-            guard !slug.isEmpty, seen.insert(slug).inserted else { return nil }
-            let title = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
-            return CollegeCategory(title: title, slug: slug, url: url)
+        var result: [CollegeCategory] = []
+
+        func append(title rawTitle: String, target rawTarget: String) {
+            let title = normalize(rawTitle)
+            guard !title.isEmpty,
+                  !title.localizedCaseInsensitiveContains("выберите")
+            else { return }
+
+            guard let url = categoryURL(from: rawTarget) else { return }
+            let slug = stableIdentifier(from: url, fallback: rawTarget + "|" + title)
+            guard !slug.isEmpty, seen.insert(slug).inserted else { return }
+            result.append(CollegeCategory(title: title, slug: slug, url: url))
         }
+
+        // Old layout and any newer link/button layout.
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let title = try element.text()
+            for target in try navigationTargets(from: element) where looksLikeCategoryTarget(target) {
+                append(title: title, target: target)
+            }
+        }
+
+        // Newer timetable pages may render buildings as <option> values and
+        // navigate via JavaScript instead of exposing /timetable/groups links.
+        let selects = try doc.select("select").array()
+        for select in selects {
+            let descriptor = [
+                try select.attr("id"),
+                try select.attr("name"),
+                try select.attr("class")
+            ].joined(separator: " ").lowercased()
+
+            let options = try select.select("option").array()
+            let values = try options.map { try $0.attr("value") }
+            let relevant = descriptor.contains("group")
+                || descriptor.contains("building")
+                || descriptor.contains("corpus")
+                || descriptor.contains("address")
+                || descriptor.contains("class")
+                || descriptor.contains("timetable")
+                || values.contains(where: { looksLikeCategoryTarget($0) })
+                || selects.count == 1
+
+            guard relevant else { continue }
+
+            for option in options {
+                let value = try option.attr("value").trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = try option.text()
+                guard !value.isEmpty, value != "0", value != "-1" else { continue }
+                append(title: title, target: value)
+            }
+        }
+
         return Parsed(value: result, validity: result.isEmpty ? .invalidStructure : .success)
     }
 
@@ -55,13 +99,48 @@ struct OATParser {
 
     func groups(from html: String, category: CollegeCategory) throws -> Parsed<[StudentGroup]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/timetable/]").array()
         var seen = Set<String>()
-        let groups = try links.compactMap { link -> StudentGroup? in
-            let name = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, seen.insert(name).inserted else { return nil }
-            return StudentGroup(name: name, url: try link.attr("href").absoluteURL(relativeTo: base), categoryID: category.slug)
+        var groups: [StudentGroup] = []
+
+        func append(name rawName: String, target rawTarget: String) {
+            let name = normalize(rawName)
+            guard looksLikeGroupName(name), seen.insert(name).inserted else { return }
+            guard let url = groupURL(from: rawTarget) else { return }
+            groups.append(StudentGroup(name: name, url: url, categoryID: category.slug))
         }
+
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let name = try element.text()
+            guard looksLikeGroupName(name) else { continue }
+            let targets = try navigationTargets(from: element)
+            for target in targets where looksLikeScheduleTarget(target) {
+                append(name: name, target: target)
+            }
+        }
+
+        let selects = try doc.select("select").array()
+        for select in selects {
+            let descriptor = [
+                try select.attr("id"),
+                try select.attr("name"),
+                try select.attr("class")
+            ].joined(separator: " ").lowercased()
+            let options = try select.select("option").array()
+            let relevant = descriptor.contains("group")
+                || descriptor.contains("class")
+                || descriptor.contains("schedule")
+                || descriptor.contains("timetable")
+                || selects.count == 1
+            guard relevant else { continue }
+
+            for option in options {
+                let value = try option.attr("value").trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = try option.text()
+                guard !value.isEmpty, value != "0", value != "-1" else { continue }
+                append(name: name, target: value)
+            }
+        }
+
         return Parsed(value: groups, validity: groups.isEmpty ? .invalidStructure : .success)
     }
 
@@ -165,6 +244,103 @@ struct OATParser {
             let text = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
             return parser.date(from: text)
         })).sorted()
+    }
+
+    private func navigationTargets(from element: Element) throws -> [String] {
+        let attributes = ["href", "data-href", "data-url", "value", "onclick"]
+        var result: [String] = []
+
+        for attribute in attributes {
+            let raw = try element.attr(attribute).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+
+            if attribute == "onclick" {
+                if let range = raw.range(
+                    of: #"https?://[^'"\s]+|/timetable/[^'";)\s]+"#,
+                    options: .regularExpression
+                ) {
+                    result.append(String(raw[range]))
+                }
+            } else {
+                result.append(raw)
+            }
+        }
+
+        return Array(Set(result))
+    }
+
+    private func looksLikeCategoryTarget(_ raw: String) -> Bool {
+        let value = raw.lowercased()
+        guard !value.isEmpty else { return false }
+        if value.contains("/timetable/classeschanges") { return false }
+        if value.contains("/timetable/classes") && !value.contains("group") { return false }
+        return value.contains("group")
+            || value.contains("/timetable/") && (value.contains("building") || value.contains("corpus") || value.contains("address"))
+    }
+
+    private func looksLikeScheduleTarget(_ raw: String) -> Bool {
+        let value = raw.lowercased()
+        guard !value.isEmpty else { return false }
+        if value.contains("/timetable/classeschanges") || value.contains("/timetable/classeschanges") { return false }
+        if value.contains("/timetable/classes") && !value.contains("group") { return false }
+        return value.contains("/timetable/")
+            || value.contains("group")
+            || value.contains("schedule")
+    }
+
+    private func categoryURL(from raw: String) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.hasPrefix("/") || value.lowercased().hasPrefix("http") {
+            return try? value.absoluteURL(relativeTo: base)
+        }
+
+        // A plain option value is most commonly the building slug.
+        guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return base.appendingPathComponent("timetable/groups").appendingPathComponent(value)
+    }
+
+    private func groupURL(from raw: String) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.hasPrefix("/") || value.lowercased().hasPrefix("http") {
+            return try? value.absoluteURL(relativeTo: base)
+        }
+
+        guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return base.appendingPathComponent("timetable/timetable").appendingPathComponent(value)
+    }
+
+    private func stableIdentifier(from url: URL, fallback: String) -> String {
+        let last = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let generic = ["groups", "group", "classes", "timetable", "schedule"]
+        if !last.isEmpty, !generic.contains(last.lowercased()) {
+            return last
+        }
+
+        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+           let value = items.compactMap(\.value).first(where: { !$0.isEmpty }) {
+            return value
+        }
+
+        let normalized = fallback
+            .lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        return String(normalized).split(separator: "-").filter { !$0.isEmpty }.joined(separator: "-")
+    }
+
+    private func looksLikeGroupName(_ text: String) -> Bool {
+        let value = normalize(text)
+        guard !value.isEmpty,
+              !value.localizedCaseInsensitiveContains("выберите")
+        else { return false }
+        return value.contains(where: \.isLetter) && value.contains(where: \.isNumber)
     }
 
     private func weekday(from header: String) -> Int? {
