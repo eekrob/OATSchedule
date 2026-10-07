@@ -54,6 +54,18 @@ final class OATParserTests: XCTestCase {
         )
     }
 
+    func testAbsoluteTeachingWeekMapsToTwoWeekTimetableCycle() throws {
+        let week6 = """
+        <html><body><h1>Расписание занятий (6 учебная неделя)</h1></body></html>
+        """
+        let week7 = """
+        <html><body><h1>Расписание занятий (7 учебная неделя)</h1></body></html>
+        """
+
+        XCTAssertEqual(try parser.currentTeachingWeek(from: week6), 2)
+        XCTAssertEqual(try parser.currentTeachingWeek(from: week7), 1)
+    }
+
     func testScheduleParsesWeeksTimesSubgroupsAndEmptyDays() throws {
         let category = CollegeCategory(title: "Корпус", slug: "ul_lenina_24", url: URL(string: "https://www.oat.ru/timetable/groups/ul_lenina_24")!)
         let group = StudentGroup(name: "ПР116", url: URL(string: "https://www.oat.ru/timetable/timetable/ul_lenina_24/ПР116")!, categoryID: category.id)
