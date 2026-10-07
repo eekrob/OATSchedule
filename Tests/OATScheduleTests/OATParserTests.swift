@@ -21,6 +21,39 @@ final class OATParserTests: XCTestCase {
         XCTAssertEqual(try parser.currentTeachingWeek(from: fixture("classes")), 2)
     }
 
+    func testRelativeCategoryLinksFromLiveSiteShape() throws {
+        let html = """
+        <html><body>
+          <a href="groups/ul_lenina_24">Корпус 1 | ул. Ленина, 24</a>
+          <a href="groups/ul_b_khmelnickogo_281a">Корпус 2 | ул. Б. Хмельницкого, 281а</a>
+        </body></html>
+        """
+        let parsed = try parser.categories(from: html)
+        XCTAssertEqual(parsed.validity, .success)
+        XCTAssertEqual(parsed.value.map(\.slug), ["ul_lenina_24", "ul_b_khmelnickogo_281a"])
+        XCTAssertEqual(parsed.value.first?.url.absoluteString, "https://www.oat.ru/timetable/groups/ul_lenina_24")
+    }
+
+    func testRelativeGroupRouteResolvesFromTimetableRoot() throws {
+        let category = CollegeCategory(
+            title: "Корпус 1",
+            slug: "ul_lenina_24",
+            url: URL(string: "https://www.oat.ru/timetable/groups/ul_lenina_24")!
+        )
+        let html = """
+        <html><body>
+          <a href="timetable/ul_lenina_24/%D0%9F%D0%A0116">ПР116</a>
+        </body></html>
+        """
+        let parsed = try parser.groups(from: html, category: category)
+        XCTAssertEqual(parsed.validity, .success)
+        XCTAssertEqual(parsed.value.first?.name, "ПР116")
+        XCTAssertEqual(
+            parsed.value.first?.url.absoluteString,
+            "https://www.oat.ru/timetable/timetable/ul_lenina_24/%D0%9F%D0%A0116"
+        )
+    }
+
     func testScheduleParsesWeeksTimesSubgroupsAndEmptyDays() throws {
         let category = CollegeCategory(title: "Корпус", slug: "ul_lenina_24", url: URL(string: "https://www.oat.ru/timetable/groups/ul_lenina_24")!)
         let group = StudentGroup(name: "ПР116", url: URL(string: "https://www.oat.ru/timetable/timetable/ul_lenina_24/ПР116")!, categoryID: category.id)
