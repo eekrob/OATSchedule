@@ -109,8 +109,8 @@ struct ScheduleView: View {
                 model = ScheduleViewModel(app: app, selection: selection)
             }
             await model?.load()
-            if selectedWeek == 0 {
-                selectedWeek = model?.schedule?.currentWeek ?? 1
+            if selectedWeek == 0, let schedule = model?.schedule {
+                selectedWeek = resolvedWeek(in: schedule)
             }
         }
         .onReceive(timer) { now = $0 }
@@ -335,10 +335,29 @@ struct ScheduleView: View {
 
     private func lessons(_ schedule: Schedule) -> [ScheduleLesson] {
         let weekday = OmskCalendar.calendar.component(.weekday, from: selectedDate)
-        let week = selectedWeek == 0 ? schedule.currentWeek : selectedWeek
+        let week = resolvedWeek(in: schedule)
         return schedule.lessons
             .filter { $0.week == week && $0.weekday == weekday }
             .sorted { $0.number < $1.number }
+    }
+
+    private func resolvedWeek(in schedule: Schedule) -> Int {
+        let available = Set(schedule.lessons.map(\.week))
+        guard !available.isEmpty else { return 1 }
+
+        let requested = selectedWeek == 0 ? schedule.currentWeek : selectedWeek
+        if available.contains(requested) {
+            return requested
+        }
+
+        // Protect against cached schedules created before currentWeek was
+        // normalized. Example: absolute week 6 should display timetable week 2.
+        let parity = ((max(1, requested) - 1) % 2) + 1
+        if available.contains(parity) {
+            return parity
+        }
+
+        return available.sorted().first ?? 1
     }
 
     private var weekStart: Date {
