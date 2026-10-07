@@ -97,10 +97,25 @@ struct OATParser {
 
     func currentTeachingWeek(from html: String) throws -> Int {
         let text = try SwiftSoup.parse(html).text()
-        let regex = try NSRegularExpression(pattern: #"Расписание занятий\s*\(\s*(\d+)\s+учебн"#, options: [.caseInsensitive])
+        let regex = try NSRegularExpression(
+            pattern: #"Расписание занятий\s*\(\s*(\d+)\s+учебн"#,
+            options: [.caseInsensitive]
+        )
         let ns = text as NSString
-        guard let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)), match.numberOfRanges > 1 else { return 1 }
-        return Int(ns.substring(with: match.range(at: 1))) ?? 1
+        guard let match = regex.firstMatch(
+            in: text,
+            range: NSRange(location: 0, length: ns.length)
+        ),
+        match.numberOfRanges > 1,
+        let absoluteWeek = Int(ns.substring(with: match.range(at: 1)))
+        else {
+            return 1
+        }
+
+        // The site header shows the absolute teaching week (for example 6),
+        // while the timetable itself is split into alternating week 1 / week 2.
+        // Convert 1,3,5... -> 1 and 2,4,6... -> 2.
+        return ((max(1, absoluteWeek) - 1) % 2) + 1
     }
 
     func groups(from html: String, category: CollegeCategory) throws -> Parsed<[StudentGroup]> {
