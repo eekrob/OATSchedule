@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 final class BlazorPageRenderer: NSObject, WKNavigationDelegate {
-    enum Mode {
+    enum Mode: Equatable {
         case navigation
         case changes
     }
