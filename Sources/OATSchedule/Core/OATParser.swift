@@ -6,6 +6,9 @@ import OSLog
 struct OATParser {
     private let logger = Logger(subsystem: "ru.oat.schedule", category: "parser")
     private let base = URL(string: "https://www.oat.ru")!
+    private let timetableBase = URL(string: "https://www.oat.ru/timetable/")!
+    private let classesPage = URL(string: "https://www.oat.ru/timetable/Classes")!
+    private let changesPage = URL(string: "https://www.oat.ru/timetable/ClassesChanges")!
 
     func categories(from html: String) throws -> Parsed<[CollegeCategory]> {
         let doc = try SwiftSoup.parse(html)
@@ -68,24 +71,27 @@ struct OATParser {
 
     func changeCategories(from html: String) throws -> Parsed<[CollegeCategory]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/Changes/], [onclick*=/timetable/Changes/], [data-href*=/timetable/Changes/]").array()
         var seen = Set<String>()
-        let result = try links.compactMap { link -> CollegeCategory? in
-            let href = try link.attr("href")
-            let rawTarget: String
-            if !href.isEmpty { rawTarget = href }
-            else if try link.hasAttr("data-href") { rawTarget = try link.attr("data-href") }
-            else { rawTarget = try link.attr("onclick") }
-            let target = rawTarget.range(of: #"/timetable/Changes/b\d+"#, options: .regularExpression).map { String(rawTarget[$0]) } ?? rawTarget
-            guard target.contains("/timetable/Changes/") else { return nil }
-            let url = try target.absoluteURL(relativeTo: base)
-            let slug = url.pathComponents.last ?? ""
-            guard slug.range(of: #"^b\d+$"#, options: .regularExpression) != nil,
-                  seen.insert(slug).inserted else { return nil }
-            let title = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
-            return CollegeCategory(title: title, slug: slug, url: url)
+        var result: [CollegeCategory] = []
+
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let title = normalize(try element.text())
+            guard !title.isEmpty else { continue }
+
+            for rawTarget in try navigationTargets(from: element) {
+                let lower = rawTarget.lowercased()
+                guard lower.contains("changes/") else { continue }
+                guard let url = resolve(rawTarget, relativeTo: changesPage) else { continue }
+
+                let slug = url.pathComponents.last ?? ""
+                guard slug.range(of: #"^b\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil,
+                      seen.insert(slug.lowercased()).inserted
+                else { continue }
+
+                result.append(CollegeCategory(title: title, slug: slug, url: url))
+            }
         }
+
         return Parsed(value: result, validity: result.isEmpty ? .invalidStructure : .success)
     }
 
@@ -105,7 +111,7 @@ struct OATParser {
         func append(name rawName: String, target rawTarget: String) {
             let name = normalize(rawName)
             guard looksLikeGroupName(name), seen.insert(name).inserted else { return }
-            guard let url = groupURL(from: rawTarget) else { return }
+            guard let url = groupURL(from: rawTarget, category: category) else { return }
             groups.append(StudentGroup(name: name, url: url, categoryID: category.slug))
         }
 
@@ -283,7 +289,7 @@ struct OATParser {
         guard !value.isEmpty else { return false }
         if value.contains("/timetable/classeschanges") || value.contains("/timetable/classeschanges") { return false }
         if value.contains("/timetable/classes") && !value.contains("group") { return false }
-        return value.contains("/timetable/")
+        return value.contains("timetable/")
             || value.contains("group")
             || value.contains("schedule")
     }
@@ -292,29 +298,58 @@ struct OATParser {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
-        if value.hasPrefix("/") || value.lowercased().hasPrefix("http") {
-            return try? value.absoluteURL(relativeTo: base)
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return resolve(value, relativeTo: classesPage)
         }
 
-        // A plain option value is most commonly the building slug.
+        // oat.ru currently returns links such as "groups/ul_lenina_24"
+        // instead of "/timetable/groups/ul_lenina_24".
+        if value.lowercased().hasPrefix("groups/") {
+            return resolve(value, relativeTo: timetableBase)
+        }
+
+        if value.contains("/") || value.hasPrefix(".") {
+            return resolve(value, relativeTo: classesPage)
+        }
+
+        // A plain option value is treated as a building slug.
         guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
             return nil
         }
-        return base.appendingPathComponent("timetable/groups").appendingPathComponent(value)
+        return timetableBase
+            .appendingPathComponent("groups")
+            .appendingPathComponent(value)
     }
 
-    private func groupURL(from raw: String) -> URL? {
+    private func groupURL(from raw: String, category: CollegeCategory) -> URL? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
-        if value.hasPrefix("/") || value.lowercased().hasPrefix("http") {
-            return try? value.absoluteURL(relativeTo: base)
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return resolve(value, relativeTo: category.url)
+        }
+
+        // A common server-rendered form is "timetable/<building>/<group>".
+        // Resolve that from /timetable/ rather than from /timetable/groups/....
+        if value.lowercased().hasPrefix("timetable/") {
+            return resolve(value, relativeTo: timetableBase)
+        }
+
+        if value.contains("/") || value.hasPrefix(".") {
+            return resolve(value, relativeTo: category.url)
         }
 
         guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
             return nil
         }
-        return base.appendingPathComponent("timetable/timetable").appendingPathComponent(value)
+        return timetableBase
+            .appendingPathComponent("timetable")
+            .appendingPathComponent(category.slug)
+            .appendingPathComponent(value)
+    }
+
+    private func resolve(_ raw: String, relativeTo page: URL) -> URL? {
+        URL(string: raw, relativeTo: page)?.absoluteURL
     }
 
     private func stableIdentifier(from url: URL, fallback: String) -> String {
