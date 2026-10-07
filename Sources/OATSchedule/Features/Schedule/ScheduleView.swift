@@ -179,7 +179,7 @@ struct ScheduleView: View {
             }
 
             HStack(spacing: 6) {
-                ForEach(0..<7, id: .self) { offset in
+                ForEach(0..<7, id: \.self) { offset in
                     let date = OmskCalendar.calendar.date(byAdding: .day, value: offset, to: weekStart) ?? selectedDate
 
                     Button {
@@ -418,7 +418,7 @@ private struct LessonCard: View {
                 lesson.subject,
                 period,
                 lesson.teacher,
-                lesson.room.map { "Ауд. ($0)" }
+                lesson.room.map { "Ауд. \($0)" }
             ]
             .compactMap { $0 }
             .joined(separator: "\n")
