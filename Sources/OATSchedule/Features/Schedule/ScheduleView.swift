@@ -16,7 +16,7 @@ final class ScheduleViewModel {
     }
 
     func load(force: Bool = false) async {
-        let key = "schedule|(selection.group.id)"
+        let key = "schedule|\\(selection.group.id)"
         if !force, schedule == nil, let cached = app.store.read(Schedule.self, key: key) {
             schedule = cached
             fetchedAt = cached.fetchedAt
@@ -144,7 +144,7 @@ struct ScheduleView: View {
             }
 
             if let fetchedAt = model.fetchedAt {
-                Text("Обновлено (fetchedAt.formatted(date: .omitted, time: .shortened)) · Омск")
+                Text("Обновлено \\(fetchedAt.formatted(date: .omitted, time: .shortened)) · Омск")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -212,7 +212,7 @@ struct ScheduleView: View {
 
     private var weekRangeTitle: String {
         let end = OmskCalendar.calendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
-        return "(formattedDate(weekStart, pattern: "d"))–(formattedDate(end, pattern: "d MMMM"))"
+        return "\\(formattedDate(weekStart, pattern: \"d\"))–\\(formattedDate(end, pattern: \"d MMMM\"))"
     }
 
     private var emptyDay: some View {
@@ -286,9 +286,9 @@ struct ScheduleView: View {
 
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("(current.number) пара")
+                        Text("\\(current.number) пара")
                             .font(.headline)
-                        Text("(current.start) – (current.end)")
+                        Text("\\(current.start) – \\(current.end)")
                             .font(.subheadline.monospacedDigit())
                     }
 
@@ -304,7 +304,7 @@ struct ScheduleView: View {
                                 .foregroundStyle(.secondary)
                         }
                         if let room = current.room {
-                            Text("каб. (room)")
+                            Text("каб. \\(room)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -314,7 +314,7 @@ struct ScheduleView: View {
                 ProgressView(value: progress)
                     .tint(.green)
 
-                Text("До конца (max(0, Int(period.end.timeIntervalSince(now) / 60))) мин")
+                Text("До конца \\(max(0, Int(period.end.timeIntervalSince(now) / 60))) мин")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -322,7 +322,7 @@ struct ScheduleView: View {
             .oatGlassSurface(radius: 22, tint: .green.opacity(0.08))
         } else if let next, let period = interval(next), period.start > now {
             Label(
-                "Следующая пара через (max(0, Int(period.start.timeIntervalSince(now) / 60))) мин",
+                "Следующая пара через \\(max(0, Int(period.start.timeIntervalSince(now) / 60))) мин",
                 systemImage: "clock"
             )
             .font(.subheadline)
@@ -377,13 +377,13 @@ private struct LessonCard: View {
     let lesson: ScheduleLesson
 
     private var period: String {
-        lesson.start.isEmpty ? "" : "(lesson.start) – (lesson.end)"
+        lesson.start.isEmpty ? "" : "\\(lesson.start) – \\(lesson.end)"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("(lesson.number) пара")
+                Text("\\(lesson.number) пара")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text(period)
@@ -401,7 +401,7 @@ private struct LessonCard: View {
                 Label(teacher, systemImage: "person")
             }
             if let room = lesson.room {
-                Label("Ауд. (room)", systemImage: "door.left.hand.open")
+                Label("Ауд. \\(room)", systemImage: "door.left.hand.open")
             }
             if let extra = lesson.extra {
                 Text(extra)
