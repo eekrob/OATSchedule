@@ -134,29 +134,43 @@ struct OATChangesService: ChangesServiceProtocol {
             return DemoData.changes(categoryID: category.id, groupName: demoGroupName)
         }
 
-        let renderer = await MainActor.run { BlazorPageRenderer() }
-        let renderedIndex = try await renderer.render(url: category.url, mode: .navigation)
-        let pages = try parser.changePages(from: renderedIndex, category: category)
-
-        // Some Blazor pages render the current day's table directly on /Changes/bN.
-        // Parse that DOM first when there are no separate date routes.
-        if pages.isEmpty {
-            let date = try parser.changePageDate(from: renderedIndex) ?? Date()
-            let parsed = try parser.changes(from: renderedIndex, category: category, date: date)
-            guard parsed.validity != .invalidStructure else {
-                throw AppFailure.invalidStructure
-            }
-            return parsed.value
-        }
+        // The live OAT page exposes real date URLs directly:
+        // /timetable/Changes/b1/12.10.2026
+        // Each date URL returns the complete server-rendered table, so there is
+        // no reason to emulate the Blazor WebSocket circuit in the app.
+        let indexHTML = try await http.html(from: category.url)
+        let pages = try parser.changePages(from: indexHTML, category: category)
 
         var all: [ScheduleChange] = []
         var successfulPages = 0
         var lastError: Error?
 
+        // Also parse the category page itself. On oat.ru it already contains
+        // the currently selected day's full table.
+        if let currentDate = try parser.changePageDate(from: indexHTML) {
+            do {
+                let parsed = try parser.changes(
+                    from: indexHTML,
+                    category: category,
+                    date: currentDate
+                )
+                if parsed.validity != .invalidStructure {
+                    successfulPages += 1
+                    all.append(contentsOf: parsed.value)
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
         for page in pages {
             do {
-                let html = try await renderer.render(url: page.url, mode: .changes)
-                let parsed = try parser.changes(from: html, category: category, date: page.date)
+                let html = try await http.html(from: page.url)
+                let parsed = try parser.changes(
+                    from: html,
+                    category: category,
+                    date: page.date
+                )
                 guard parsed.validity != .invalidStructure else {
                     throw AppFailure.invalidStructure
                 }
@@ -166,7 +180,7 @@ struct OATChangesService: ChangesServiceProtocol {
             } catch {
                 lastError = error
                 await NetworkDiagnosticsStore.shared.recordAppEvent(
-                    "BLAZOR CHANGE PAGE FAILED",
+                    "CHANGE PAGE FAILED",
                     details: "URL: \(page.url.absoluteString) · \(error.localizedDescription)"
                 )
             }
@@ -176,11 +190,16 @@ struct OATChangesService: ChangesServiceProtocol {
             throw lastError ?? AppFailure.invalidStructure
         }
 
-        // Blazor may expose the same date through several controls/links.
-        // Keep only one copy of each change.
-        return Array(
-            Dictionary(all.map { ($0.stableID, $0) }, uniquingKeysWith: { first, _ in first }).values
+        let unique = Dictionary(
+            all.map { ($0.stableID, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
+
+        return unique.values.sorted {
+            if $0.date != $1.date { return $0.date > $1.date }
+            if $0.group != $1.group { return $0.group < $1.group }
+            return ($0.oldLesson ?? $0.newLesson ?? 0) < ($1.oldLesson ?? $1.newLesson ?? 0)
+        }
     }
 }
 
