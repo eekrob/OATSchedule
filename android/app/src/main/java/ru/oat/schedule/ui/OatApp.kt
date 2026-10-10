@@ -145,7 +145,7 @@ private fun SetupScreen(viewModel: OatViewModel) {
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) viewModel.setNotificationsEnabled(true)
+        if (granted) viewModel.updateNotificationsEnabled(true)
         viewModel.completeSelection()
     }
 
@@ -159,7 +159,7 @@ private fun SetupScreen(viewModel: OatViewModel) {
         ) {
             notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            viewModel.setNotificationsEnabled(true)
+            viewModel.updateNotificationsEnabled(true)
             viewModel.completeSelection()
         }
     }
@@ -1005,12 +1005,12 @@ private fun SettingsScreen(viewModel: OatViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        viewModel.setNotificationsEnabled(granted)
+        viewModel.updateNotificationsEnabled(granted)
     }
 
     fun setNotifications(enabled: Boolean) {
         if (!enabled) {
-            viewModel.setNotificationsEnabled(false)
+            viewModel.updateNotificationsEnabled(false)
             return
         }
 
@@ -1023,7 +1023,7 @@ private fun SettingsScreen(viewModel: OatViewModel) {
         ) {
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            viewModel.setNotificationsEnabled(true)
+            viewModel.updateNotificationsEnabled(true)
         }
     }
 
@@ -1107,7 +1107,7 @@ private fun SettingsScreen(viewModel: OatViewModel) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { viewModel.setAppearance(value) }
+                            .clickable { viewModel.updateAppearance(value) }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1116,7 +1116,7 @@ private fun SettingsScreen(viewModel: OatViewModel) {
                         Text(title, modifier = Modifier.weight(1f))
                         RadioButton(
                             selected = viewModel.appearance == value,
-                            onClick = { viewModel.setAppearance(value) }
+                            onClick = { viewModel.updateAppearance(value) }
                         )
                     }
                     if (index < 2) HorizontalDivider(Modifier.padding(start = 52.dp))
