@@ -129,6 +129,20 @@ final class OATParserTests: XCTestCase {
         )
     }
 
+    func testChangePageDatePrefersActiveHeadingOverDatePicker() throws {
+        let html = """
+        <html><body>
+          <h2 class="section-title">Изменения в расписании на 12 октября (понедельник)</h2>
+          <a href="/timetable/Changes/b1/02.10.2026">02.10.2026</a>
+          <a href="/timetable/Changes/b1/12.10.2026">12.10.2026</a>
+        </body></html>
+        """
+        let date = try XCTUnwrap(parser.changePageDate(from: html))
+        let components = OmskCalendar.calendar.dateComponents([.day, .month], from: date)
+        XCTAssertEqual(components.day, 12)
+        XCTAssertEqual(components.month, 10)
+    }
+
     func testRenderedChangePageDateSupportsRussianHeading() throws {
         let html = """
         <html><body><h1>Изменения в расписании на 07 октября (среда)</h1></body></html>
