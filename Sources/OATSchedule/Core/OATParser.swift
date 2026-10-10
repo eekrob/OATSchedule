@@ -317,9 +317,12 @@ struct OATParser {
         let doc = try SwiftSoup.parse(html)
         let text = try doc.text()
 
-        if let numeric = dates(in: text).first {
-            return numeric
-        }
+        // Prefer the page heading. The date picker contains many numeric dates
+        // before the active one, so taking the first dd.MM.yyyy from the whole
+        // document can attach today's table to the wrong day.
+        let headingText = try doc.select("h1, h2, .section-title").array()
+            .map { try $0.text() }
+            .joined(separator: " ")
 
         let monthNumbers: [String: Int] = [
             "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
@@ -329,24 +332,36 @@ struct OATParser {
 
         let pattern = #"(?i)\b(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b"#
         let regex = try NSRegularExpression(pattern: pattern)
-        let ns = text as NSString
 
-        guard let match = regex.firstMatch(
-            in: text,
-            range: NSRange(location: 0, length: ns.length)
-        ),
-        match.numberOfRanges >= 3,
-        let day = Int(ns.substring(with: match.range(at: 1))),
-        let month = monthNumbers[ns.substring(with: match.range(at: 2)).lowercased()]
-        else {
-            return nil
+        func russianDate(in value: String) -> Date? {
+            let ns = value as NSString
+            guard let match = regex.firstMatch(
+                in: value,
+                range: NSRange(location: 0, length: ns.length)
+            ),
+            match.numberOfRanges >= 3,
+            let day = Int(ns.substring(with: match.range(at: 1))),
+            let month = monthNumbers[ns.substring(with: match.range(at: 2)).lowercased()]
+            else {
+                return nil
+            }
+
+            var components = OmskCalendar.calendar.dateComponents([.year], from: Date())
+            components.month = month
+            components.day = day
+            components.hour = 12
+            return OmskCalendar.calendar.date(from: components)
         }
 
-        var components = OmskCalendar.calendar.dateComponents([.year], from: Date())
-        components.month = month
-        components.day = day
-        components.hour = 12
-        return OmskCalendar.calendar.date(from: components)
+        if let headingDate = russianDate(in: headingText) {
+            return headingDate
+        }
+
+        if let bodyDate = russianDate(in: text) {
+            return bodyDate
+        }
+
+        return dates(in: text).first
     }
 
     private func dates(in text: String) -> [Date] {
