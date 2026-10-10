@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+set -eu
+
+GRADLE_VERSION="8.9"
+CACHE_DIR="${HOME}/.gradle/oat-wrapper"
+DIST_DIR="${CACHE_DIR}/gradle-${GRADLE_VERSION}"
+ZIP="${CACHE_DIR}/gradle-${GRADLE_VERSION}-bin.zip"
+
+if [ ! -x "${DIST_DIR}/bin/gradle" ]; then
+  mkdir -p "${CACHE_DIR}"
+  if [ ! -f "${ZIP}" ]; then
+    echo "Downloading Gradle ${GRADLE_VERSION}..."
+    curl -L --fail --retry 3       "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"       -o "${ZIP}"
+  fi
+  rm -rf "${DIST_DIR}"
+  unzip -q "${ZIP}" -d "${CACHE_DIR}"
+fi
+
+exec "${DIST_DIR}/bin/gradle" "$@"
