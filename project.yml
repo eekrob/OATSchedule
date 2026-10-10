@@ -14,6 +14,12 @@ targets:
     sources: [Sources/OATSchedule]
     dependencies:
       - package: SwiftSoup
+    preBuildScripts:
+      - name: Generate App Icon
+        script: bash "$SRCROOT/scripts/generate-app-icon.sh"
+        outputFiles:
+          - $(SRCROOT)/Sources/OATSchedule/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.oat.schedule
@@ -21,10 +27,14 @@ targets:
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: 1.0
+        CURRENT_PROJECT_VERSION: 1
     info:
       path: OATSchedule/Info.plist
       properties:
         CFBundleDisplayName: ОмАВИАТ Расписание
+        UILaunchScreen: {}
         CFBundleURLTypes:
           - CFBundleURLName: ru.oat.schedule
             CFBundleURLSchemes:

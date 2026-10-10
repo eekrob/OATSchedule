@@ -57,8 +57,14 @@ struct ChangesView: View {
                 if let model {
                     VStack(spacing: 0) {
                         Picker("Фильтр", selection: $scope) {
-                            Text("Моя группа").tag(0); Text("Все").tag(1)
-                        }.pickerStyle(.segmented).padding(.horizontal).padding(.top, 4).padding(.bottom, 10)
+                            Text("Моя группа").tag(0)
+                            Text("Все").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+                        .padding(.bottom, 10)
+                        .animation(.snappy, value: scope)
                         if let error = model.error, model.changes.isEmpty {
                             ContentUnavailableView("Не удалось загрузить изменения", systemImage: "wifi.exclamationmark", description: Text(error))
                         } else {
@@ -71,8 +77,12 @@ struct ChangesView: View {
                                         LazyVStack(spacing: 12) {
                                             ForEach(items) { change in
                                                 ChangeCard(change: change, isHighlighted: deepLinkedChangeID == change.stableID)
+                                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                                             }
-                                        }.padding(.horizontal).padding(.vertical, 10)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 10)
+                                        .animation(.snappy, value: items.map(\.stableID))
                                     }.background(Color(uiColor: .systemGroupedBackground))
                                         .onChange(of: deepLinkedChangeID) { _, id in scroll(to: id, proxy: proxy) }
                                         .onChange(of: model.changes) { _, _ in scroll(to: deepLinkedChangeID, proxy: proxy) }
@@ -99,8 +109,11 @@ struct ChangesView: View {
     }
     private func scroll(to id: String?, proxy: ScrollViewProxy) {
         guard let id, model?.changes.contains(where: { $0.stableID == id }) == true else { return }
-        scope = 1
-        Task { try? await Task.sleep(for: .milliseconds(200)); withAnimation { proxy.scrollTo(id, anchor: .center) } }
+        withAnimation(.snappy) { scope = 1 }
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+        }
     }
 }
 

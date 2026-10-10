@@ -47,10 +47,16 @@ struct ScheduleView: View {
                                 else {
                                     currentLesson(schedule)
                                     Text("Дальше сегодня").font(.headline)
-                                    ForEach(dayLessons) { LessonCard(lesson: $0) }
+                                    ForEach(dayLessons) {
+                                        LessonCard(lesson: $0)
+                                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    }
                                 }
                             } else { ProgressView("Загружаю расписание…").frame(maxWidth: .infinity).padding(.top, 50) }
-                        }.padding()
+                        }
+                        .padding()
+                        .animation(.snappy, value: selectedDate)
+                        .animation(.easeInOut(duration: 0.2), value: model.isLoading)
                     }
                     .background(Color(uiColor: .systemGroupedBackground))
                     .refreshable { await model.load(force: true) }
@@ -63,7 +69,9 @@ struct ScheduleView: View {
         .task {
             if model == nil { model = ScheduleViewModel(app: app, selection: selection) }
             await model?.load()
-            if selectedWeek == 0 { selectedWeek = model?.schedule?.currentWeek ?? 1 }
+            if selectedWeek == 0, let schedule = model?.schedule {
+                selectedWeek = resolvedWeek(in: schedule)
+            }
         }
         .onReceive(timer) { now = $0 }
     }
@@ -90,11 +98,19 @@ struct ScheduleView: View {
     private var dayPicker: some View {
         VStack(spacing: 10) {
             HStack {
-                Button { selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: -7, to: selectedDate) ?? selectedDate } label: { Image(systemName: "chevron.left") }
+                Button {
+                    withAnimation(.snappy) {
+                        selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: -7, to: selectedDate) ?? selectedDate
+                    }
+                } label: { Image(systemName: "chevron.left") }
                 Spacer()
                 Text(weekRangeTitle).font(.subheadline.weight(.medium))
                 Spacer()
-                Button { selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: 7, to: selectedDate) ?? selectedDate } label: { Image(systemName: "chevron.right") }
+                Button {
+                    withAnimation(.snappy) {
+                        selectedDate = OmskCalendar.calendar.date(byAdding: .day, value: 7, to: selectedDate) ?? selectedDate
+                    }
+                } label: { Image(systemName: "chevron.right") }
             }.buttonStyle(.plain).foregroundStyle(.primary)
             HStack(spacing: 5) {
                 ForEach(0..<7, id: \.self) { offset in
@@ -164,8 +180,27 @@ struct ScheduleView: View {
     }
     private func lessons(_ schedule: Schedule) -> [ScheduleLesson] {
         let weekday = OmskCalendar.calendar.component(.weekday, from: selectedDate)
-        let week = selectedWeek == 0 ? schedule.currentWeek : selectedWeek
-        return schedule.lessons.filter { $0.week == week && $0.weekday == weekday }.sorted { $0.number < $1.number }
+        let week = resolvedWeek(in: schedule)
+        return schedule.lessons
+            .filter { $0.week == week && $0.weekday == weekday }
+            .sorted { $0.number < $1.number }
+    }
+
+    private func resolvedWeek(in schedule: Schedule) -> Int {
+        let available = Set(schedule.lessons.map(\.week))
+        guard !available.isEmpty else { return 1 }
+
+        let requested = selectedWeek == 0 ? schedule.currentWeek : selectedWeek
+        if available.contains(requested) {
+            return requested
+        }
+
+        let parity = ((max(1, requested) - 1) % 2) + 1
+        if available.contains(parity) {
+            return parity
+        }
+
+        return available.sorted().first ?? 1
     }
     private var weekStart: Date { OmskCalendar.calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start ?? selectedDate }
     private func isSelected(_ date: Date) -> Bool { OmskCalendar.calendar.isDate(date, inSameDayAs: selectedDate) }

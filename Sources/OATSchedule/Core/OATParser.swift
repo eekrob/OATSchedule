@@ -6,62 +6,162 @@ import OSLog
 struct OATParser {
     private let logger = Logger(subsystem: "ru.oat.schedule", category: "parser")
     private let base = URL(string: "https://www.oat.ru")!
+    private let timetableBase = URL(string: "https://www.oat.ru/timetable/")!
+    private let classesPage = URL(string: "https://www.oat.ru/timetable/Classes")!
+    private let changesPage = URL(string: "https://www.oat.ru/timetable/ClassesChanges")!
 
     func categories(from html: String) throws -> Parsed<[CollegeCategory]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/groups/]").array()
         var seen = Set<String>()
-        let result = try links.compactMap { link -> CollegeCategory? in
-            let url = try link.attr("href").absoluteURL(relativeTo: base)
-            let slug = url.lastPathComponent
-            guard !slug.isEmpty, seen.insert(slug).inserted else { return nil }
-            let title = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
-            return CollegeCategory(title: title, slug: slug, url: url)
+        var result: [CollegeCategory] = []
+
+        func append(title rawTitle: String, target rawTarget: String) {
+            let title = normalize(rawTitle)
+            guard !title.isEmpty,
+                  !title.localizedCaseInsensitiveContains("выберите")
+            else { return }
+
+            guard let url = categoryURL(from: rawTarget) else { return }
+            let slug = stableIdentifier(from: url, fallback: rawTarget + "|" + title)
+            guard !slug.isEmpty, seen.insert(slug).inserted else { return }
+            result.append(CollegeCategory(title: title, slug: slug, url: url))
         }
+
+        // Old layout and any newer link/button layout.
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let title = try element.text()
+            for target in try navigationTargets(from: element) where looksLikeCategoryTarget(target) {
+                append(title: title, target: target)
+            }
+        }
+
+        // Newer timetable pages may render buildings as <option> values and
+        // navigate via JavaScript instead of exposing /timetable/groups links.
+        let selects = try doc.select("select").array()
+        for select in selects {
+            let descriptor = [
+                try select.attr("id"),
+                try select.attr("name"),
+                try select.attr("class")
+            ].joined(separator: " ").lowercased()
+
+            let options = try select.select("option").array()
+            let values = try options.map { try $0.attr("value") }
+            let relevant = descriptor.contains("group")
+                || descriptor.contains("building")
+                || descriptor.contains("corpus")
+                || descriptor.contains("address")
+                || descriptor.contains("class")
+                || descriptor.contains("timetable")
+                || values.contains(where: { looksLikeCategoryTarget($0) })
+                || selects.count == 1
+
+            guard relevant else { continue }
+
+            for option in options {
+                let value = try option.attr("value").trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = try option.text()
+                guard !value.isEmpty, value != "0", value != "-1" else { continue }
+                append(title: title, target: value)
+            }
+        }
+
         return Parsed(value: result, validity: result.isEmpty ? .invalidStructure : .success)
     }
 
     func changeCategories(from html: String) throws -> Parsed<[CollegeCategory]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/Changes/], [onclick*=/timetable/Changes/], [data-href*=/timetable/Changes/]").array()
         var seen = Set<String>()
-        let result = try links.compactMap { link -> CollegeCategory? in
-            let href = try link.attr("href")
-            let rawTarget: String
-            if !href.isEmpty { rawTarget = href }
-            else if try link.hasAttr("data-href") { rawTarget = try link.attr("data-href") }
-            else { rawTarget = try link.attr("onclick") }
-            let target = rawTarget.range(of: #"/timetable/Changes/b\d+"#, options: .regularExpression).map { String(rawTarget[$0]) } ?? rawTarget
-            guard target.contains("/timetable/Changes/") else { return nil }
-            let url = try target.absoluteURL(relativeTo: base)
-            let slug = url.pathComponents.last ?? ""
-            guard slug.range(of: #"^b\d+$"#, options: .regularExpression) != nil,
-                  seen.insert(slug).inserted else { return nil }
-            let title = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
-            return CollegeCategory(title: title, slug: slug, url: url)
+        var result: [CollegeCategory] = []
+
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let title = normalize(try element.text())
+            guard !title.isEmpty else { continue }
+
+            for rawTarget in try navigationTargets(from: element) {
+                let lower = rawTarget.lowercased()
+                guard lower.contains("changes/") else { continue }
+                guard let url = resolve(rawTarget, relativeTo: changesPage) else { continue }
+
+                let slug = url.pathComponents.last ?? ""
+                guard slug.range(of: #"^b\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil,
+                      seen.insert(slug.lowercased()).inserted
+                else { continue }
+
+                result.append(CollegeCategory(title: title, slug: slug, url: url))
+            }
         }
+
         return Parsed(value: result, validity: result.isEmpty ? .invalidStructure : .success)
     }
 
     func currentTeachingWeek(from html: String) throws -> Int {
         let text = try SwiftSoup.parse(html).text()
-        let regex = try NSRegularExpression(pattern: #"Расписание занятий\s*\(\s*(\d+)\s+учебн"#, options: [.caseInsensitive])
+        let regex = try NSRegularExpression(
+            pattern: #"Расписание занятий\s*\(\s*(\d+)\s+учебн"#,
+            options: [.caseInsensitive]
+        )
         let ns = text as NSString
-        guard let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)), match.numberOfRanges > 1 else { return 1 }
-        return Int(ns.substring(with: match.range(at: 1))) ?? 1
+        guard let match = regex.firstMatch(
+            in: text,
+            range: NSRange(location: 0, length: ns.length)
+        ),
+        match.numberOfRanges > 1,
+        let absoluteWeek = Int(ns.substring(with: match.range(at: 1)))
+        else {
+            return 1
+        }
+
+        // The site header shows the absolute teaching week (for example 6),
+        // while the timetable itself is split into alternating week 1 / week 2.
+        // Convert 1,3,5... -> 1 and 2,4,6... -> 2.
+        return ((max(1, absoluteWeek) - 1) % 2) + 1
     }
 
     func groups(from html: String, category: CollegeCategory) throws -> Parsed<[StudentGroup]> {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a[href*=/timetable/timetable/]").array()
         var seen = Set<String>()
-        let groups = try links.compactMap { link -> StudentGroup? in
-            let name = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, seen.insert(name).inserted else { return nil }
-            return StudentGroup(name: name, url: try link.attr("href").absoluteURL(relativeTo: base), categoryID: category.slug)
+        var groups: [StudentGroup] = []
+
+        func append(name rawName: String, target rawTarget: String) {
+            let name = normalize(rawName)
+            guard looksLikeGroupName(name), seen.insert(name).inserted else { return }
+            guard let url = groupURL(from: rawTarget, category: category) else { return }
+            groups.append(StudentGroup(name: name, url: url, categoryID: category.slug))
         }
+
+        for element in try doc.select("a[href], [data-href], [data-url], [onclick]").array() {
+            let name = try element.text()
+            guard looksLikeGroupName(name) else { continue }
+            let targets = try navigationTargets(from: element)
+            for target in targets where looksLikeScheduleTarget(target) {
+                append(name: name, target: target)
+            }
+        }
+
+        let selects = try doc.select("select").array()
+        for select in selects {
+            let descriptor = [
+                try select.attr("id"),
+                try select.attr("name"),
+                try select.attr("class")
+            ].joined(separator: " ").lowercased()
+            let options = try select.select("option").array()
+            let relevant = descriptor.contains("group")
+                || descriptor.contains("class")
+                || descriptor.contains("schedule")
+                || descriptor.contains("timetable")
+                || selects.count == 1
+            guard relevant else { continue }
+
+            for option in options {
+                let value = try option.attr("value").trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = try option.text()
+                guard !value.isEmpty, value != "0", value != "-1" else { continue }
+                append(name: name, target: value)
+            }
+        }
+
         return Parsed(value: groups, validity: groups.isEmpty ? .invalidStructure : .success)
     }
 
@@ -159,12 +259,288 @@ struct OATParser {
 
     func changeDates(from html: String, categoryID: String) throws -> [Date] {
         let doc = try SwiftSoup.parse(html)
-        let links = try doc.select("a").array()
-        let parser = DateFormatter(); parser.locale = Locale(identifier: "en_US_POSIX"); parser.timeZone = OmskCalendar.timeZone; parser.dateFormat = "dd.MM.yyyy"
-        return Array(Set(try links.compactMap { link -> Date? in
-            let text = try link.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            return parser.date(from: text)
-        })).sorted()
+        var values: [Date] = []
+
+        for element in try doc.select("a, button, option, [role=button]").array() {
+            values.append(contentsOf: dates(in: try element.text()))
+            values.append(contentsOf: dates(in: try element.attr("href")))
+            values.append(contentsOf: dates(in: try element.attr("data-href")))
+            values.append(contentsOf: dates(in: try element.attr("data-url")))
+        }
+
+        if values.isEmpty {
+            values.append(contentsOf: dates(in: try doc.text()))
+        }
+
+        return Array(Set(values)).sorted()
+    }
+
+    func changePages(from html: String, category: CollegeCategory) throws -> [(date: Date, url: URL)] {
+        let doc = try SwiftSoup.parse(html)
+        var result: [(date: Date, url: URL)] = []
+        var seen = Set<String>()
+
+        for element in try doc.select("a, button, option, [role=button]").array() {
+            let text = try element.text()
+            let targets = [
+                try element.attr("href"),
+                try element.attr("data-href"),
+                try element.attr("data-url")
+            ]
+
+            var candidateDates = dates(in: text)
+            for target in targets {
+                candidateDates.append(contentsOf: dates(in: target))
+            }
+
+            for date in candidateDates {
+                let target = targets.first(where: { isUsableChangeTarget($0) })
+                let url = target.flatMap { resolveChangeTarget($0, category: category) }
+                    ?? category.url.appendingPathComponent(changeDateKey(date))
+
+                let key = "\(date.timeIntervalSince1970)|\(url.absoluteString)"
+                guard seen.insert(key).inserted else { continue }
+                result.append((date, url))
+            }
+        }
+
+        if result.isEmpty {
+            for date in try changeDates(from: html, categoryID: category.id) {
+                result.append((date, category.url.appendingPathComponent(changeDateKey(date))))
+            }
+        }
+
+        return result.sorted { $0.date > $1.date }
+    }
+
+    func changePageDate(from html: String) throws -> Date? {
+        let doc = try SwiftSoup.parse(html)
+        let text = try doc.text()
+
+        // Prefer the page heading. The date picker contains many numeric dates
+        // before the active one, so taking the first dd.MM.yyyy from the whole
+        // document can attach today's table to the wrong day.
+        let headingText = try doc.select("h1, h2, .section-title").array()
+            .map { try $0.text() }
+            .joined(separator: " ")
+
+        let monthNumbers: [String: Int] = [
+            "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+            "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+            "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12
+        ]
+
+        let pattern = #"(?i)\b(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b"#
+        let regex = try NSRegularExpression(pattern: pattern)
+
+        func russianDate(in value: String) -> Date? {
+            let ns = value as NSString
+            guard let match = regex.firstMatch(
+                in: value,
+                range: NSRange(location: 0, length: ns.length)
+            ),
+            match.numberOfRanges >= 3,
+            let day = Int(ns.substring(with: match.range(at: 1))),
+            let month = monthNumbers[ns.substring(with: match.range(at: 2)).lowercased()]
+            else {
+                return nil
+            }
+
+            var components = OmskCalendar.calendar.dateComponents([.year], from: Date())
+            components.month = month
+            components.day = day
+            components.hour = 12
+            return OmskCalendar.calendar.date(from: components)
+        }
+
+        if let headingDate = russianDate(in: headingText) {
+            return headingDate
+        }
+
+        if let bodyDate = russianDate(in: text) {
+            return bodyDate
+        }
+
+        return dates(in: text).first
+    }
+
+    private func dates(in text: String) -> [Date] {
+        guard !text.isEmpty else { return [] }
+
+        let regex = try? NSRegularExpression(pattern: #"\b\d{1,2}\.\d{1,2}\.\d{4}\b"#)
+        let ns = text as NSString
+        let matches = regex?.matches(
+            in: text,
+            range: NSRange(location: 0, length: ns.length)
+        ) ?? []
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "d.M.yyyy"
+
+        return matches.compactMap { formatter.date(from: ns.substring(with: $0.range)) }
+    }
+
+    private func changeDateKey(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "dd.MM.yyyy"
+        return formatter.string(from: date)
+    }
+
+    private func isUsableChangeTarget(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty,
+              value != "#",
+              !value.lowercased().hasPrefix("javascript:")
+        else {
+            return false
+        }
+        return true
+    }
+
+    private func resolveChangeTarget(_ raw: String, category: CollegeCategory) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isUsableChangeTarget(value) else { return nil }
+
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return URL(string: value, relativeTo: base)?.absoluteURL
+        }
+
+        if value.lowercased().contains("timetable/changes/") || value.lowercased().hasPrefix("changes/") {
+            return URL(string: value, relativeTo: timetableBase)?.absoluteURL
+        }
+
+        let directory = category.url.appendingPathComponent("")
+        return URL(string: value, relativeTo: directory)?.absoluteURL
+    }
+
+    private func navigationTargets(from element: Element) throws -> [String] {
+        let attributes = ["href", "data-href", "data-url", "value", "onclick"]
+        var result: [String] = []
+
+        for attribute in attributes {
+            let raw = try element.attr(attribute).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+
+            if attribute == "onclick" {
+                if let range = raw.range(
+                    of: #"https?://[^'"\s]+|/timetable/[^'";)\s]+"#,
+                    options: .regularExpression
+                ) {
+                    result.append(String(raw[range]))
+                }
+            } else {
+                result.append(raw)
+            }
+        }
+
+        return Array(Set(result))
+    }
+
+    private func looksLikeCategoryTarget(_ raw: String) -> Bool {
+        let value = raw.lowercased()
+        guard !value.isEmpty else { return false }
+        if value.contains("/timetable/classeschanges") { return false }
+        if value.contains("/timetable/classes") && !value.contains("group") { return false }
+        return value.contains("group")
+            || value.contains("/timetable/") && (value.contains("building") || value.contains("corpus") || value.contains("address"))
+    }
+
+    private func looksLikeScheduleTarget(_ raw: String) -> Bool {
+        let value = raw.lowercased()
+        guard !value.isEmpty else { return false }
+        if value.contains("/timetable/classeschanges") || value.contains("/timetable/classeschanges") { return false }
+        if value.contains("/timetable/classes") && !value.contains("group") { return false }
+        return value.contains("timetable/")
+            || value.contains("group")
+            || value.contains("schedule")
+    }
+
+    private func categoryURL(from raw: String) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return resolve(value, relativeTo: classesPage)
+        }
+
+        // oat.ru currently returns links such as "groups/ul_lenina_24"
+        // instead of "/timetable/groups/ul_lenina_24".
+        if value.lowercased().hasPrefix("groups/") {
+            return resolve(value, relativeTo: timetableBase)
+        }
+
+        if value.contains("/") || value.hasPrefix(".") {
+            return resolve(value, relativeTo: classesPage)
+        }
+
+        // A plain option value is treated as a building slug.
+        guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return timetableBase
+            .appendingPathComponent("groups")
+            .appendingPathComponent(value)
+    }
+
+    private func groupURL(from raw: String, category: CollegeCategory) -> URL? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.lowercased().hasPrefix("http") || value.hasPrefix("/") {
+            return resolve(value, relativeTo: category.url)
+        }
+
+        // A common server-rendered form is "timetable/<building>/<group>".
+        // Resolve that from /timetable/ rather than from /timetable/groups/....
+        if value.lowercased().hasPrefix("timetable/") {
+            return resolve(value, relativeTo: timetableBase)
+        }
+
+        if value.contains("/") || value.hasPrefix(".") {
+            return resolve(value, relativeTo: category.url)
+        }
+
+        guard value.range(of: #"^[A-Za-zА-Яа-яЁё0-9_.-]+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return timetableBase
+            .appendingPathComponent("timetable")
+            .appendingPathComponent(category.slug)
+            .appendingPathComponent(value)
+    }
+
+    private func resolve(_ raw: String, relativeTo page: URL) -> URL? {
+        URL(string: raw, relativeTo: page)?.absoluteURL
+    }
+
+    private func stableIdentifier(from url: URL, fallback: String) -> String {
+        let last = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let generic = ["groups", "group", "classes", "timetable", "schedule"]
+        if !last.isEmpty, !generic.contains(last.lowercased()) {
+            return last
+        }
+
+        if let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+           let value = items.compactMap(\.value).first(where: { !$0.isEmpty }) {
+            return value
+        }
+
+        let normalized = fallback
+            .lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "-" }
+        return String(normalized).split(separator: "-").filter { !$0.isEmpty }.joined(separator: "-")
+    }
+
+    private func looksLikeGroupName(_ text: String) -> Bool {
+        let value = normalize(text)
+        guard !value.isEmpty,
+              !value.localizedCaseInsensitiveContains("выберите")
+        else { return false }
+        return value.contains(where: \.isLetter) && value.contains(where: \.isNumber)
     }
 
     private func weekday(from header: String) -> Int? {

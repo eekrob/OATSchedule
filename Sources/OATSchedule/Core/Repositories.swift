@@ -74,21 +74,30 @@ struct MockNotificationService: NotificationServiceProtocol {
 }
 
 struct OATScheduleService: ScheduleServiceProtocol {
-    let http: HTTPClient; let parser: OATParser
+    let http: HTTPClient
+    let parser: OATParser
     private let root = URL(string: "https://www.oat.ru/timetable/Classes")!
+
+    private var testMode: Bool { UserDefaults.standard.bool(forKey: "testMode") }
+
     func loadCategories() async throws -> [CollegeCategory] {
+        if testMode { return [DemoData.category] }
         let html = try await http.html(from: root)
         let parsed = try parser.categories(from: html)
         guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
         return parsed.value
     }
+
     func loadGroups(in category: CollegeCategory) async throws -> [StudentGroup] {
+        if testMode || category.id == DemoData.category.id { return DemoData.groups }
         let html = try await http.html(from: category.url)
         let parsed = try parser.groups(from: html, category: category)
         guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
         return parsed.value
     }
+
     func loadSchedule(for group: StudentGroup) async throws -> Schedule {
+        if testMode || group.categoryID == DemoData.category.id { return DemoData.schedule(for: group) }
         let index = try await http.html(from: root)
         let week = try parser.currentTeachingWeek(from: index)
         let scheduleHTML = try await http.html(from: group.url)
@@ -99,30 +108,98 @@ struct OATScheduleService: ScheduleServiceProtocol {
 }
 
 struct OATChangesService: ChangesServiceProtocol {
-    let http: HTTPClient; let parser: OATParser
+    let http: HTTPClient
+    let parser: OATParser
     private let root = URL(string: "https://www.oat.ru/timetable/ClassesChanges")!
+
+    private var testMode: Bool { UserDefaults.standard.bool(forKey: "testMode") }
+    private var demoGroupName: String {
+        if let selectionData = UserDefaults.standard.data(forKey: "demoSelection"),
+           let selection = try? JSONDecoder().decode(UserSelection.self, from: selectionData) {
+            return selection.group.name
+        }
+        return DemoData.groups.first?.name ?? "ПР-116"
+    }
+
     func loadCategories() async throws -> [CollegeCategory] {
+        if testMode { return [DemoData.category] }
         let html = try await http.html(from: root)
         let parsed = try parser.changeCategories(from: html)
         guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
         return parsed.value
     }
+
     func loadChanges(in category: CollegeCategory) async throws -> [ScheduleChange] {
-        let indexHTML = try await http.html(from: category.url)
-        let dates = try parser.changeDates(from: indexHTML, categoryID: category.slug)
-        guard !dates.isEmpty else { throw AppFailure.invalidStructure }
-        let base = URL(string: "https://www.oat.ru/timetable/Changes/\(category.slug)")!
-        var all: [ScheduleChange] = []
-        // Fetch only currently posted dates. Sequential requests avoid hammering the college site.
-        for date in dates {
-            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = OmskCalendar.timeZone; formatter.dateFormat = "dd.MM.yyyy"
-            let url = base.appendingPathComponent(formatter.string(from: date))
-            let html = try await http.html(from: url)
-            let parsed = try parser.changes(from: html, category: category, date: date)
-            guard parsed.validity != .invalidStructure else { throw AppFailure.invalidStructure }
-            all.append(contentsOf: parsed.value)
+        if testMode || category.id == DemoData.category.id {
+            return DemoData.changes(categoryID: category.id, groupName: demoGroupName)
         }
-        return all
+
+        // The live OAT page exposes real date URLs directly:
+        // /timetable/Changes/b1/12.10.2026
+        // Each date URL returns the complete server-rendered table, so there is
+        // no reason to emulate the Blazor WebSocket circuit in the app.
+        let indexHTML = try await http.html(from: category.url)
+        let pages = try parser.changePages(from: indexHTML, category: category)
+
+        var all: [ScheduleChange] = []
+        var successfulPages = 0
+        var lastError: Error?
+
+        // Also parse the category page itself. On oat.ru it already contains
+        // the currently selected day's full table.
+        if let currentDate = try parser.changePageDate(from: indexHTML) {
+            do {
+                let parsed = try parser.changes(
+                    from: indexHTML,
+                    category: category,
+                    date: currentDate
+                )
+                if parsed.validity != .invalidStructure {
+                    successfulPages += 1
+                    all.append(contentsOf: parsed.value)
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
+        for page in pages {
+            do {
+                let html = try await http.html(from: page.url)
+                let parsed = try parser.changes(
+                    from: html,
+                    category: category,
+                    date: page.date
+                )
+                guard parsed.validity != .invalidStructure else {
+                    throw AppFailure.invalidStructure
+                }
+
+                successfulPages += 1
+                all.append(contentsOf: parsed.value)
+            } catch {
+                lastError = error
+                await NetworkDiagnosticsStore.shared.recordAppEvent(
+                    "CHANGE PAGE FAILED",
+                    details: "URL: \(page.url.absoluteString) · \(error.localizedDescription)"
+                )
+            }
+        }
+
+        guard successfulPages > 0 else {
+            throw lastError ?? AppFailure.invalidStructure
+        }
+
+        let unique = Dictionary(
+            all.map { ($0.stableID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        return unique.values.sorted {
+            if $0.date != $1.date { return $0.date > $1.date }
+            if $0.group != $1.group { return $0.group < $1.group }
+            return ($0.oldLesson ?? $0.newLesson ?? 0) < ($1.oldLesson ?? $1.newLesson ?? 0)
+        }
     }
 }
 
@@ -141,7 +218,9 @@ struct ChangeDiffEngine {
         }
         return result
     }
-    private func logicalKey(_ item: ScheduleChange) -> String { "\(item.categoryID)|\(item.group)|\(item.date.timeIntervalSince1970)|\(item.oldLesson ?? item.newLesson ?? 0)|\(item.reason ?? "")" }
+    private func logicalKey(_ item: ScheduleChange) -> String {
+        "\(item.categoryID)|\(item.group)|\(item.date.timeIntervalSince1970)|\(item.oldLesson ?? item.newLesson ?? 0)|\(item.reason ?? "")"
+    }
 }
 
 @MainActor
@@ -151,13 +230,15 @@ final class AppContainer {
     let changesService: any ChangesServiceProtocol
     let store: LocalStore
     let notifications: any NotificationServiceProtocol
+
     init(
         context: ModelContext,
         scheduleService: (any ScheduleServiceProtocol)? = nil,
         changesService: (any ChangesServiceProtocol)? = nil,
         notificationService: (any NotificationServiceProtocol)? = nil
     ) {
-        let client = HTTPClient(); let parser = OATParser()
+        let client = HTTPClient()
+        let parser = OATParser()
         self.scheduleService = scheduleService ?? OATScheduleService(http: client, parser: parser)
         self.changesService = changesService ?? OATChangesService(http: client, parser: parser)
         self.store = LocalStore(context: context)
@@ -165,6 +246,10 @@ final class AppContainer {
     }
 
     func refresh(selection: UserSelection) async {
+        if UserDefaults.standard.bool(forKey: "testMode"),
+           let data = try? JSONEncoder().encode(selection) {
+            UserDefaults.standard.set(data, forKey: "demoSelection")
+        }
         async let scheduleTask: Void = refreshSchedule(selection: selection)
         async let changesTask: Void = refreshChanges(selection: selection)
         _ = await (scheduleTask, changesTask)
@@ -174,7 +259,9 @@ final class AppContainer {
         do {
             let schedule = try await scheduleService.loadSchedule(for: selection.group)
             store.write(schedule, key: "schedule|\(selection.group.id)")
-        } catch { Logger(subsystem: "ru.oat.schedule", category: "schedule").error("Background refresh failed") }
+        } catch {
+            Logger(subsystem: "ru.oat.schedule", category: "schedule").error("Background refresh failed")
+        }
     }
 
     private func refreshChanges(selection: UserSelection) async {
@@ -186,9 +273,9 @@ final class AppContainer {
             let key = "changes|\(category.id)"
             let fresh = try await changesService.loadChanges(in: category)
             let previous = store.read([ScheduleChange].self, key: key)
-            if previous?.isEmpty == false && fresh.isEmpty { return } // A suddenly empty page is suspicious; keep the last good snapshot.
+            if previous?.isEmpty == false && fresh.isEmpty { return }
             store.write(fresh, key: key)
-            guard let previous else { return } // First load is a quiet baseline.
+            guard let previous else { return }
             let groupKey = selection.group.name.filter { $0.isLetter || $0.isNumber }.uppercased()
             let deltas = ChangeDiffEngine().diff(old: previous, new: fresh)
             for delta in deltas {
@@ -204,7 +291,9 @@ final class AppContainer {
                 await notifications.notify(change)
                 store.write(true, key: sentKey)
             }
-        } catch { Logger(subsystem: "ru.oat.schedule", category: "changes").error("Changes refresh failed") }
+        } catch {
+            Logger(subsystem: "ru.oat.schedule", category: "changes").error("Changes refresh failed")
+        }
     }
 }
 
@@ -212,6 +301,7 @@ struct LocalNotificationService: NotificationServiceProtocol {
     func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
+
     func notify(_ change: ScheduleChange) async {
         let center = UNUserNotificationCenter.current()
         let content = UNMutableNotificationContent()
@@ -226,4 +316,3 @@ struct LocalNotificationService: NotificationServiceProtocol {
         try? await center.add(request)
     }
 }
-
