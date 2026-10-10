@@ -107,6 +107,28 @@ final class OATParserTests: XCTestCase {
         )
     }
 
+    func testLiveChangeDateLinksUseDirectServerPages() throws {
+        let category = CollegeCategory(
+            title: "Корпус 1",
+            slug: "b1",
+            url: URL(string: "https://www.oat.ru/timetable/Changes/b1")!
+        )
+        let html = """
+        <html><body>
+          <h2>Изменения в расписании на 12 октября (понедельник)</h2>
+          <a class="choose-item" href="/timetable/Changes/b1/10.10.2026">10.10.2026</a>
+          <a class="choose-item active" href="/timetable/Changes/b1/12.10.2026">12.10.2026</a>
+        </body></html>
+        """
+
+        let pages = try parser.changePages(from: html, category: category)
+        XCTAssertEqual(pages.count, 2)
+        XCTAssertEqual(
+            pages.first?.url.absoluteString,
+            "https://www.oat.ru/timetable/Changes/b1/12.10.2026"
+        )
+    }
+
     func testRenderedChangePageDateSupportsRussianHeading() throws {
         let html = """
         <html><body><h1>Изменения в расписании на 07 октября (среда)</h1></body></html>
