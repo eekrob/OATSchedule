@@ -185,12 +185,12 @@ class OatViewModel(application: Application) : AndroidViewModel(application) {
         changesLoading = false
     }
 
-    fun setAppearance(value: String) {
+    fun updateAppearance(value: String) {
         appearance = value
         repository.preferences.setAppearance(value)
     }
 
-    fun setNotificationsEnabled(value: Boolean) {
+    fun updateNotificationsEnabled(value: Boolean) {
         notificationsEnabled = value
         repository.preferences.setNotificationsEnabled(value)
 
