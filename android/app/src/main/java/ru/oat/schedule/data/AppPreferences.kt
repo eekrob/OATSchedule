@@ -1,6 +1,7 @@
 package ru.oat.schedule.data
 
 import android.content.Context
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import ru.oat.schedule.model.Schedule
