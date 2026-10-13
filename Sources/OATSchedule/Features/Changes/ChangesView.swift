@@ -51,14 +51,28 @@ struct ChangesView: View {
     @Binding var deepLinkedChangeID: String?
     @State private var model: ChangesViewModel?
     @State private var scope = 0
+    @State private var selectedDateKey = "__AUTO__"
     var body: some View {
         NavigationStack {
             Group {
                 if let model {
                     VStack(spacing: 0) {
                         Picker("Фильтр", selection: $scope) {
-                            Text("Моя группа").tag(0); Text("Все").tag(1)
-                        }.pickerStyle(.segmented).padding(.horizontal).padding(.top, 4).padding(.bottom, 10)
+                            Text("Моя группа").tag(0)
+                            Text("Все группы").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+                        .padding(.bottom, 8)
+                        .animation(.snappy, value: scope)
+
+                        if !availableDates(model.changes).isEmpty {
+                            datePicker(for: model.changes)
+                                .padding(.bottom, 8)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
                         if let error = model.error, model.changes.isEmpty {
                             ContentUnavailableView("Не удалось загрузить изменения", systemImage: "wifi.exclamationmark", description: Text(error))
                         } else {
@@ -71,8 +85,12 @@ struct ChangesView: View {
                                         LazyVStack(spacing: 12) {
                                             ForEach(items) { change in
                                                 ChangeCard(change: change, isHighlighted: deepLinkedChangeID == change.stableID)
+                                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                                             }
-                                        }.padding(.horizontal).padding(.vertical, 10)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 10)
+                                        .animation(.snappy, value: items.map(\.stableID))
                                     }.background(Color(uiColor: .systemGroupedBackground))
                                         .onChange(of: deepLinkedChangeID) { _, id in scroll(to: id, proxy: proxy) }
                                         .onChange(of: model.changes) { _, _ in scroll(to: deepLinkedChangeID, proxy: proxy) }
@@ -82,6 +100,10 @@ struct ChangesView: View {
                         }
                     }
                     .refreshable { await model.load(force: true) }
+                    .onAppear { resolveInitialDate(from: model.changes) }
+                    .onChange(of: model.changes) { _, values in
+                        resolveInitialDate(from: values)
+                    }
                     .navigationTitle("Изменения")
                     .navigationBarTitleDisplayMode(.large)
                     .toolbar { if model.isLoading { ToolbarItem(placement: .topBarTrailing) { ProgressView() } } }
@@ -94,13 +116,124 @@ struct ChangesView: View {
         }
     }
     private func visibleChanges(_ values: [ScheduleChange]) -> [ScheduleChange] {
-        let filtered = scope == 0 ? values.filter { $0.group.localizedCaseInsensitiveCompare(selection.group.name) == .orderedSame } : values
-        return filtered.sorted { $0.date == $1.date ? ($0.oldLesson ?? 0) < ($1.oldLesson ?? 0) : $0.date > $1.date }
+        var filtered = scope == 0
+            ? values.filter { $0.group.localizedCaseInsensitiveCompare(selection.group.name) == .orderedSame }
+            : values
+
+        if selectedDateKey != "__ALL__", selectedDateKey != "__AUTO__" {
+            filtered = filtered.filter { dateKey($0.date) == selectedDateKey }
+        }
+
+        return filtered.sorted {
+            $0.date == $1.date
+                ? ($0.oldLesson ?? $0.newLesson ?? 0) < ($1.oldLesson ?? $1.newLesson ?? 0)
+                : $0.date > $1.date
+        }
     }
+
+    private func availableDates(_ values: [ScheduleChange]) -> [Date] {
+        let calendar = OmskCalendar.calendar
+        let unique = Dictionary(
+            grouping: values,
+            by: { calendar.startOfDay(for: $0.date) }
+        )
+        return unique.keys.sorted(by: >)
+    }
+
+    @ViewBuilder
+    private func datePicker(for values: [ScheduleChange]) -> some View {
+        let dates = availableDates(values)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                dateChip(title: "Все дни", key: "__ALL__")
+
+                ForEach(dates, id: \.self) { date in
+                    dateChip(
+                        title: OmskCalendar.calendar.isDateInToday(date) ? "Сегодня" : chipDate(date),
+                        key: dateKey(date)
+                    )
+                }
+            }
+            .padding(.horizontal)
+        }
+        .animation(.snappy, value: selectedDateKey)
+    }
+
+    private func dateChip(title: String, key: String) -> some View {
+        let selected = selectedDateKey == key
+        return Button {
+            withAnimation(.snappy) {
+                selectedDateKey = key
+            }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    selected ? Color.accentColor : Color(uiColor: .secondarySystemBackground),
+                    in: Capsule()
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.secondary.opacity(selected ? 0 : 0.18), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func resolveInitialDate(from values: [ScheduleChange]) {
+        let dates = availableDates(values)
+        guard !dates.isEmpty else {
+            selectedDateKey = "__ALL__"
+            return
+        }
+
+        let availableKeys = Set(dates.map(dateKey))
+        if selectedDateKey != "__AUTO__",
+           selectedDateKey == "__ALL__" || availableKeys.contains(selectedDateKey) {
+            return
+        }
+
+        let today = dateKey(Date())
+        selectedDateKey = availableKeys.contains(today)
+            ? today
+            : dateKey(dates[0])
+    }
+
+    private func dateKey(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = OmskCalendar.calendar
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func chipDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.calendar = OmskCalendar.calendar
+        formatter.timeZone = OmskCalendar.timeZone
+        formatter.dateFormat = "d MMM"
+        return formatter.string(from: date)
+    }
+
     private func scroll(to id: String?, proxy: ScrollViewProxy) {
-        guard let id, model?.changes.contains(where: { $0.stableID == id }) == true else { return }
-        scope = 1
-        Task { try? await Task.sleep(for: .milliseconds(200)); withAnimation { proxy.scrollTo(id, anchor: .center) } }
+        guard let id,
+              let change = model?.changes.first(where: { $0.stableID == id })
+        else { return }
+
+        withAnimation(.snappy) {
+            scope = 1
+            selectedDateKey = dateKey(change.date)
+        }
+
+        Task {
+            try? await Task.sleep(for: .milliseconds(200))
+            withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+        }
     }
 }
 
