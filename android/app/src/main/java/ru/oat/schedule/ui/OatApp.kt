@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -812,13 +813,47 @@ private fun MetaLine(icon: androidx.compose.ui.graphics.vector.ImageVector, text
 private fun ChangesScreen(viewModel: OatViewModel) {
     val selection = viewModel.selection ?: return
     var mineOnly by rememberSaveable { mutableStateOf(true) }
+    var selectedDate by rememberSaveable { mutableStateOf("__AUTO__") }
 
-    val visible = remember(viewModel.changes, mineOnly, selection.group.name) {
-        if (!mineOnly) viewModel.changes
-        else {
+    val today = remember { LocalDate.now(OmskZone).toString() }
+    val availableDates = remember(viewModel.changes) {
+        viewModel.changes
+            .map { it.date }
+            .distinct()
+            .sortedDescending()
+    }
+
+    LaunchedEffect(availableDates) {
+        if (availableDates.isNotEmpty()) {
+            if (selectedDate == "__AUTO__" || (selectedDate != "__ALL__" && selectedDate !in availableDates)) {
+                selectedDate = if (today in availableDates) today else availableDates.first()
+            }
+        }
+    }
+
+    val visible = remember(
+        viewModel.changes,
+        mineOnly,
+        selection.group.name,
+        selectedDate
+    ) {
+        val byGroup = if (!mineOnly) {
+            viewModel.changes
+        } else {
             val key = normalizeGroup(selection.group.name)
             viewModel.changes.filter { normalizeGroup(it.group) == key }
         }
+
+        when (selectedDate) {
+            "__ALL__", "__AUTO__" -> byGroup
+            else -> byGroup.filter { it.date == selectedDate }
+        }
+    }
+
+    val dateSubtitle = when (selectedDate) {
+        "__ALL__", "__AUTO__" -> "Все доступные дни"
+        today -> "Сегодня"
+        else -> formatIsoDate(selectedDate)
     }
 
     Column(
@@ -829,13 +864,17 @@ private fun ChangesScreen(viewModel: OatViewModel) {
     ) {
         ScreenHeader(
             title = "Изменения",
-            subtitle = if (mineOnly) selection.group.name else "Все группы корпуса",
+            subtitle = if (mineOnly) {
+                "${selection.group.name} · $dateSubtitle"
+            } else {
+                "Все группы · $dateSubtitle"
+            },
             loading = viewModel.changesLoading,
             onRefresh = viewModel::refreshChanges
         )
 
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FilterChip(
@@ -846,8 +885,46 @@ private fun ChangesScreen(viewModel: OatViewModel) {
             FilterChip(
                 selected = !mineOnly,
                 onClick = { mineOnly = false },
-                label = { Text("Все") }
+                label = { Text("Все группы") }
             )
+        }
+
+        if (availableDates.isNotEmpty()) {
+            Text(
+                "День",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 18.dp, top = 4.dp, bottom = 2.dp)
+            )
+
+            LazyRow(
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    FilterChip(
+                        selected = selectedDate == "__ALL__",
+                        onClick = { selectedDate = "__ALL__" },
+                        label = { Text("Все дни") }
+                    )
+                }
+
+                items(availableDates, key = { it }) { date ->
+                    FilterChip(
+                        selected = selectedDate == date,
+                        onClick = { selectedDate = date },
+                        label = {
+                            Text(
+                                if (date == today) {
+                                    "Сегодня"
+                                } else {
+                                    formatIsoDate(date)
+                                }
+                            )
+                        }
+                    )
+                }
+            }
         }
 
         AnimatedContent(
@@ -860,10 +937,16 @@ private fun ChangesScreen(viewModel: OatViewModel) {
                 EmptyState(
                     icon = Icons.Default.CheckCircle,
                     title = "Изменений нет",
-                    description = if (mineOnly)
-                        "Для ${selection.group.name} пока всё по расписанию."
-                    else
-                        "Для выбранного корпуса изменений не найдено.",
+                    description = when {
+                        selectedDate == "__ALL__" && mineOnly ->
+                            "Для ${selection.group.name} в доступных днях изменений нет."
+                        selectedDate == "__ALL__" ->
+                            "Для выбранного корпуса изменений не найдено."
+                        mineOnly ->
+                            "Для ${selection.group.name} на $dateSubtitle изменений нет."
+                        else ->
+                            "На $dateSubtitle для выбранного корпуса изменений нет."
+                    },
                     loading = viewModel.changesLoading
                 )
             } else {
